@@ -29,9 +29,6 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-# Add parent to path so the package can be imported when running as __main__
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-
 from openai_anthropic_converter import OpenAIToAnthropicConverter
 
 logger = logging.getLogger("openai_server")

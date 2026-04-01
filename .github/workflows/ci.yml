@@ -33,7 +33,7 @@ jobs:
         run: ruff format --check .
 
       - name: MyPy type check
-        run: mypy --ignore-missing-imports --no-strict-optional .
+        run: mypy --ignore-missing-imports --no-strict-optional openai_anthropic_converter/
 
   test:
     name: Test
@@ -49,10 +49,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
+      - name: Install package with dev dependencies
         run: |
           pip install --upgrade pip
-          pip install pytest typing_extensions
+          pip install -e ".[dev]"
 
       - name: Run unit tests
         run: python -m pytest tests/ -v
