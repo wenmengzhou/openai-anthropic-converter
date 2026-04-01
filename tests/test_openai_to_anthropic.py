@@ -859,3 +859,233 @@ class TestEdgeCases:
         assert msg["content"] == "Result."
         assert len(msg["thinking_blocks"]) == 1
         assert msg["thinking_blocks"][0]["type"] == "redacted_thinking"
+
+    def test_tool_call_index_with_mixed_content(self):
+        """Tool call indices should be sequential among tool calls only, not content blocks."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "test",
+            "content": [
+                {"type": "text", "text": "I'll do both."},
+                {
+                    "type": "tool_use",
+                    "id": "tu_1",
+                    "name": "search",
+                    "input": {"q": "a"},
+                },
+                {
+                    "type": "tool_use",
+                    "id": "tu_2",
+                    "name": "fetch",
+                    "input": {"url": "http://x.com"},
+                },
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 10, "output_tokens": 20},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert len(msg["tool_calls"]) == 2
+        # Indices should be 0 and 1, NOT 1 and 2
+        assert msg["tool_calls"][0]["index"] == 0
+        assert msg["tool_calls"][1]["index"] == 1
+
+    def test_server_tool_use_conversion(self):
+        """server_tool_use blocks should be converted to tool_calls."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "test",
+            "content": [
+                {
+                    "type": "server_tool_use",
+                    "id": "stu_1",
+                    "name": "web_search",
+                    "input": {"query": "test"},
+                },
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 5, "output_tokens": 5},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert len(msg["tool_calls"]) == 1
+        assert msg["tool_calls"][0]["function"]["name"] == "web_search"
+        assert msg["tool_calls"][0]["index"] == 0
+
+    def test_mcp_tool_use_conversion(self):
+        """mcp_tool_use blocks should be converted to tool_calls."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "test",
+            "content": [
+                {
+                    "type": "mcp_tool_use",
+                    "id": "mtu_1",
+                    "name": "my_mcp_tool",
+                    "input": {"key": "value"},
+                },
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 5, "output_tokens": 5},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert len(msg["tool_calls"]) == 1
+        assert msg["tool_calls"][0]["function"]["name"] == "my_mcp_tool"
+
+    def test_citations_in_response(self):
+        """Citations in text blocks should be captured in provider_specific_fields."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "test",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "According to the source...",
+                    "citations": [
+                        {
+                            "type": "document",
+                            "document_index": 0,
+                            "start_char_index": 0,
+                            "end_char_index": 10,
+                        }
+                    ],
+                },
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 5, "output_tokens": 10},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert "provider_specific_fields" in msg
+        assert "citations" in msg["provider_specific_fields"]
+
+    def test_web_search_tool_result_in_response(self):
+        """web_search_tool_result blocks should be captured."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "test",
+            "content": [
+                {
+                    "type": "web_search_tool_result",
+                    "tool_use_id": "stu_1",
+                    "content": [{"type": "web_search_result", "url": "http://example.com"}],
+                },
+                {"type": "text", "text": "Based on search results..."},
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 20},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert "provider_specific_fields" in msg
+        assert "web_search_results" in msg["provider_specific_fields"]
+
+    def test_image_url_base64_conversion(self):
+        """Base64 data URIs should be parsed correctly."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,iVBORw0KGgoAAAANS=="},
+                        },
+                    ],
+                },
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        content = result["messages"][0]["content"]
+        assert content[0]["type"] == "image"
+        assert content[0]["source"]["type"] == "base64"
+        assert content[0]["source"]["media_type"] == "image/png"
+        assert content[0]["source"]["data"] == "iVBORw0KGgoAAAANS=="
+
+    def test_image_url_http_conversion(self):
+        """HTTP URLs should be converted to url source type."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "https://example.com/img.jpg"},
+                        },
+                    ],
+                },
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        content = result["messages"][0]["content"]
+        assert content[0]["type"] == "image"
+        assert content[0]["source"]["type"] == "url"
+        assert content[0]["source"]["url"] == "https://example.com/img.jpg"
+
+    def test_tool_message_list_content(self):
+        """Tool messages with list content should be preserved."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "content": [
+                        {"type": "text", "text": "Result part 1"},
+                        {"type": "text", "text": "Result part 2"},
+                    ],
+                },
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        # Should have a user message with tool_result
+        user_msg = result["messages"][0]
+        assert user_msg["role"] == "user"
+        tool_result = user_msg["content"][0]
+        assert tool_result["type"] == "tool_result"
+        assert isinstance(tool_result["content"], list)
+
+    def test_cache_control_on_tools(self):
+        """cache_control on tool definitions should be preserved."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [{"role": "user", "content": "Use tool"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search",
+                        "description": "Search",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                    "cache_control": {"type": "ephemeral"},
+                },
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["tools"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_thinking_passthrough(self):
+        """Thinking param should pass through when directly specified."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [{"role": "user", "content": "Think"}],
+            "thinking": {"type": "enabled", "budget_tokens": 8000},
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["thinking"]["type"] == "enabled"
+        assert result["thinking"]["budget_tokens"] == 8000

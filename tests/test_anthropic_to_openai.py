@@ -1458,6 +1458,109 @@ class TestEdgeCases:
         result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
         assert "response_format" not in result
 
+    def test_server_tools_filtered_out(self):
+        """Server tools like text_editor should be filtered from OpenAI tools."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [
+                {"type": "text_editor_20250124", "name": "str_replace_editor"},
+                {"name": "my_tool", "input_schema": {"type": "object", "properties": {}}},
+            ],
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assert len(result["tools"]) == 1
+        assert result["tools"][0]["function"]["name"] == "my_tool"
+
+    def test_code_execution_tool_filtered(self):
+        """Code execution tools should be filtered out."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [
+                {"type": "code_execution_20250522", "name": "code_execution"},
+                {"name": "my_tool", "input_schema": {"type": "object", "properties": {}}},
+            ],
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assert len(result["tools"]) == 1
+        assert result["tools"][0]["function"]["name"] == "my_tool"
+
+    def test_custom_type_tool_preserved(self):
+        """Tools with type='custom' should be preserved."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [
+                {
+                    "type": "custom",
+                    "name": "my_custom",
+                    "input_schema": {"type": "object", "properties": {}},
+                },
+            ],
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assert len(result["tools"]) == 1
+        assert result["tools"][0]["function"]["name"] == "my_custom"
+
+    def test_response_with_thinking_and_text_and_tools(self):
+        """Response with thinking + text + tool_calls should produce correct block order."""
+        resp = {
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Let me search.",
+                        "thinking_blocks": [
+                            {"type": "thinking", "thinking": "I need to search", "signature": "s1"}
+                        ],
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "search", "arguments": '{"q":"test"}'},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 30, "total_tokens": 50},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(resp)
+
+        types = [b["type"] for b in result["content"]]
+        # Thinking should come first, then text, then tool_use
+        assert types == ["thinking", "text", "tool_use"]
+
+    def test_user_string_content_passthrough(self):
+        """String user content should be passed through directly."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hello world"}],
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assert result["messages"][0]["content"] == "Hello world"
+
+    def test_no_max_tokens_still_works(self):
+        """Missing max_tokens should still work (it's required in Anthropic but not OpenAI)."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        # max_tokens should not be set if not provided
+        assert "max_tokens" not in result
+
 
 def _make_chunk(delta, finish_reason=None):
     """Helper to build an OpenAI streaming chunk."""

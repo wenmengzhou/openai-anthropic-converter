@@ -34,15 +34,17 @@ def extract_response_content(
     web_search_results: Optional[List[Any]] = None
     tool_results: Optional[List[Any]] = None
 
-    for idx, block in enumerate(content_blocks):
+    tool_call_index = 0
+    for block in content_blocks:
         block_type = block.get("type", "")
 
         if block_type == "text":
             text_content += block.get("text", "")
 
-        elif block_type in ("tool_use", "server_tool_use"):
-            tool_call = convert_tool_use_to_openai(block, idx)
+        elif block_type in ("tool_use", "server_tool_use", "mcp_tool_use"):
+            tool_call = convert_tool_use_to_openai(block, tool_call_index)
             tool_calls.append(tool_call)
+            tool_call_index += 1
 
         elif block_type == "thinking" or block.get("thinking") is not None:
             if thinking_blocks is None:

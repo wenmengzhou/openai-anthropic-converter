@@ -281,8 +281,9 @@ def convert_tools(
     for tool in tools:
         tool_type = tool.get("type", "")
 
-        # Skip web search and other hosted tools
-        if tool_type.startswith("web_search"):
+        # Skip Anthropic server/hosted tools that have no OpenAI equivalent
+        # Regular tools have no type or type="custom"; server tools have specific types
+        if tool_type and tool_type != "custom":
             continue
 
         original_name = tool.get("name", "")
@@ -423,21 +424,17 @@ def convert_request(
     # tools
     tools = request.pop("tools", None)
     if tools:
-        # Separate web search tools
-        web_search_tools = [
-            t for t in tools if isinstance(t, dict) and t.get("type", "").startswith("web_search")
-        ]
-        regular_tools = [
-            t
-            for t in tools
-            if not (isinstance(t, dict) and t.get("type", "").startswith("web_search"))
-        ]
-
-        if web_search_tools:
+        # Detect web search tools
+        has_web_search = any(
+            isinstance(t, dict) and t.get("type", "").startswith("web_search") for t in tools
+        )
+        if has_web_search:
             result["web_search_options"] = {}
 
-        if regular_tools:
-            result["tools"], tool_name_mapping = convert_tools(regular_tools)
+        # convert_tools filters out all server tools (web_search, text_editor, etc.)
+        openai_tools, tool_name_mapping = convert_tools(tools)
+        if openai_tools:
+            result["tools"] = openai_tools
 
     # tool_choice
     tool_choice = request.pop("tool_choice", None)
