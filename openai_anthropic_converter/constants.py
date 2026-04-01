@@ -27,6 +27,7 @@ OPENAI_TO_ANTHROPIC_STOP_REASON = {
     "length": "max_tokens",
     "tool_calls": "tool_use",
     "content_filter": "end_turn",
+    "function_call": "tool_use",  # deprecated OpenAI finish reason
 }
 
 # Reasoning effort -> thinking budget_tokens mapping

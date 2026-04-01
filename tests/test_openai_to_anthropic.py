@@ -519,3 +519,343 @@ class TestRoundtrip:
         assert openai_req2["model"] == "claude-sonnet-4-20250514"
         assert openai_req2["max_tokens"] == 1024
         assert openai_req2["temperature"] == 0.7
+
+
+class TestEdgeCases:
+    """Test edge cases and less common scenarios."""
+
+    def test_empty_messages(self):
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["messages"] == []
+
+    def test_none_content_in_user_message(self):
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [{"role": "user", "content": None}],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        # Should handle None content gracefully
+        assert len(result["messages"]) >= 0
+
+    def test_assistant_with_none_content_and_tool_calls(self):
+        """Assistant message with content=None but tool_calls should work."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "test", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "result"},
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assistant_msgs = [m for m in result["messages"] if m["role"] == "assistant"]
+        assert len(assistant_msgs) >= 1
+        # Should have tool_use block
+        tool_blocks = [b for b in assistant_msgs[0]["content"] if b.get("type") == "tool_use"]
+        assert len(tool_blocks) == 1
+
+    def test_response_format_json_object(self):
+        """response_format: {type: 'json_object'} should create a JSON tool."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [{"role": "user", "content": "List items as JSON"}],
+            "response_format": {"type": "json_object"},
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        # Should have a json_tool_call tool
+        assert "tools" in result
+        tool_names = [t.get("name") for t in result["tools"]]
+        assert "json_tool_call" in tool_names
+        assert result["tool_choice"]["type"] == "tool"
+
+    def test_response_format_json_schema(self):
+        """response_format with json_schema for supported models."""
+        openai_req = {
+            "model": "claude-sonnet-4-5-20250514",
+            "messages": [{"role": "user", "content": "Respond structured"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "my_schema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                    },
+                },
+            },
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert "output_format" in result
+        assert result["output_format"]["type"] == "json_schema"
+
+    def test_max_completion_tokens_alias(self):
+        """max_completion_tokens should work as alias for max_tokens."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_completion_tokens": 2048,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["max_tokens"] == 2048
+
+    def test_parallel_tool_calls_false(self):
+        """parallel_tool_calls: false -> disable_parallel_tool_use: true."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tool_choice": "auto",
+            "parallel_tool_calls": False,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["tool_choice"]["type"] == "auto"
+        assert result["tool_choice"]["disable_parallel_tool_use"] is True
+
+    def test_multiple_system_messages(self):
+        """Multiple system messages should all be extracted."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "system", "content": "Be concise."},
+                {"role": "user", "content": "Hi"},
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert len(result["system"]) == 2
+        assert result["system"][0]["text"] == "You are helpful."
+        assert result["system"][1]["text"] == "Be concise."
+
+    def test_tool_with_no_parameters(self):
+        """Tool with no parameters should get default schema."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_time",
+                        "description": "Get current time",
+                    },
+                }
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        tool = result["tools"][0]
+        assert tool["name"] == "get_time"
+        assert tool["input_schema"]["type"] == "object"
+
+    def test_context_management_conversion(self):
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "context_management": [{"type": "compaction", "compact_threshold": 200000}],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert "context_management" in result
+        assert result["context_management"]["edits"][0]["type"] == "compact_20260112"
+        assert result["context_management"]["edits"][0]["trigger"]["value"] == 200000
+
+    def test_multiple_tool_calls_stream(self):
+        """Test streaming with multiple sequential tool calls."""
+        events = [
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": "claude-sonnet-4-20250514",
+                    "content": [],
+                    "stop_reason": None,
+                    "usage": {"input_tokens": 10, "output_tokens": 0},
+                },
+            },
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "tu_1",
+                    "name": "search",
+                    "input": {},
+                },
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": '{"q":"a"}'},
+            },
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "tu_2",
+                    "name": "fetch",
+                    "input": {},
+                },
+            },
+            {
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {"type": "input_json_delta", "partial_json": '{"url":"b"}'},
+            },
+            {"type": "content_block_stop", "index": 1},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "tool_use"},
+                "usage": {"output_tokens": 20},
+            },
+            {"type": "message_stop"},
+        ]
+
+        chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
+        tool_chunks = [c for c in chunks if c["choices"][0]["delta"].get("tool_calls")]
+
+        # Find tool_call starts (have id field)
+        tool_starts = []
+        for c in tool_chunks:
+            for tc in c["choices"][0]["delta"]["tool_calls"]:
+                if tc.get("id"):
+                    tool_starts.append(tc)
+
+        assert len(tool_starts) == 2
+        assert tool_starts[0]["id"] == "tu_1"
+        assert tool_starts[0]["function"]["name"] == "search"
+        assert tool_starts[0]["index"] == 0
+        assert tool_starts[1]["id"] == "tu_2"
+        assert tool_starts[1]["function"]["name"] == "fetch"
+        assert tool_starts[1]["index"] == 1
+
+    def test_json_mode_response_extraction(self):
+        """JSON tool response should be extracted as text content."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-20250514",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tu_1",
+                    "name": "json_tool_call",
+                    "input": {"name": "Alice", "age": 30},
+                }
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 10, "output_tokens": 20},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        # Should extract as text content, not tool_calls
+        assert msg["content"] is not None
+        assert "tool_calls" not in msg
+        parsed = json.loads(msg["content"])
+        assert parsed["name"] == "Alice"
+
+    def test_signature_delta_in_stream(self):
+        """Test that signature deltas in thinking streams are handled."""
+        events = [
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": "test",
+                    "content": [],
+                    "stop_reason": None,
+                    "usage": {"input_tokens": 0, "output_tokens": 0},
+                },
+            },
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "thinking_delta", "thinking": "thinking..."},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "signature_delta", "signature": "sig123"},
+            },
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 10},
+            },
+            {"type": "message_stop"},
+        ]
+        chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
+        sig_chunks = [
+            c
+            for c in chunks
+            if c["choices"][0]["delta"].get("thinking_blocks")
+            and any(tb.get("signature") for tb in c["choices"][0]["delta"]["thinking_blocks"])
+        ]
+        assert len(sig_chunks) == 1
+        assert sig_chunks[0]["choices"][0]["delta"]["thinking_blocks"][0]["signature"] == "sig123"
+
+    def test_empty_text_content_response(self):
+        """Response with only tool_use and no text should have content=None."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "test",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tu_1",
+                    "name": "search",
+                    "input": {"q": "test"},
+                }
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 5, "output_tokens": 10},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert msg["content"] is None
+        assert len(msg["tool_calls"]) == 1
+
+    def test_redacted_thinking_blocks_response(self):
+        """Test that redacted thinking blocks are passed through."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "test",
+            "content": [
+                {"type": "redacted_thinking", "data": "abc123"},
+                {"type": "text", "text": "Result."},
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 5, "output_tokens": 10},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert msg["content"] == "Result."
+        assert len(msg["thinking_blocks"]) == 1
+        assert msg["thinking_blocks"][0]["type"] == "redacted_thinking"

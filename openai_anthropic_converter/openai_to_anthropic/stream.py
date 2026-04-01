@@ -44,6 +44,8 @@ class AnthropicSSEToOpenAIStream:
         elif event_type == "content_block_delta":
             return self._handle_content_block_delta(event)
         elif event_type == "content_block_stop":
+            if self.current_content_type == "tool_use":
+                self.tool_index += 1
             self.current_content_type = None
             return None
         elif event_type == "message_delta":
@@ -188,10 +190,6 @@ class AnthropicSSEToOpenAIStream:
                 "completion_tokens": output_tokens,
                 "total_tokens": prompt_tokens + output_tokens,
             }
-
-        # Increment tool index for next tool block
-        if self.current_content_type == "tool_use":
-            self.tool_index += 1
 
         return chunk
 

@@ -423,6 +423,22 @@ def convert_response_format(
     if value.get("type") in ("text", None):
         return result
 
+    # Handle json_object mode (no schema) - use generic JSON tool
+    if value.get("type") == "json_object":
+        tool = {
+            "name": RESPONSE_FORMAT_TOOL_NAME,
+            "description": "Respond with valid JSON.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True,
+            },
+        }
+        result["json_mode_tool"] = tool
+        result["tool_choice"] = {"name": RESPONSE_FORMAT_TOOL_NAME, "type": "tool"}
+        result["json_mode"] = True
+        return result
+
     json_schema = _extract_json_schema(value)
     if json_schema is None:
         return result
