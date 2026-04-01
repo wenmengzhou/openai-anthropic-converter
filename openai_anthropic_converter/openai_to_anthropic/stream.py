@@ -85,7 +85,8 @@ class AnthropicSSEToOpenAIStream:
         block_type = content_block.get("type", "text")
         self.current_content_type = block_type
 
-        if block_type == "tool_use":
+        if block_type in ("tool_use", "server_tool_use", "mcp_tool_use"):
+            self.current_content_type = "tool_use"  # Normalize to tool_use
             self.current_tool_call_id = content_block.get("id", "")
             self.current_tool_name = content_block.get("name", "")
             # Emit initial tool call chunk

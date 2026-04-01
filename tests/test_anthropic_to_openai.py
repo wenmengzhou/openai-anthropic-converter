@@ -1561,6 +1561,237 @@ class TestEdgeCases:
         # max_tokens should not be set if not provided
         assert "max_tokens" not in result
 
+    def test_tool_result_single_text_block(self):
+        """tool_result with single text block content should extract text."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [{"type": "text", "text": "The result"}],
+                        },
+                    ],
+                },
+            ],
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        tool_msgs = [m for m in result["messages"] if m["role"] == "tool"]
+        assert tool_msgs[0]["content"] == "The result"
+
+    def test_tool_result_with_image_content(self):
+        """tool_result with image content should convert to URL."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": "image/png",
+                                        "data": "abc123",
+                                    },
+                                }
+                            ],
+                        },
+                    ],
+                },
+            ],
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        tool_msgs = [m for m in result["messages"] if m["role"] == "tool"]
+        assert "base64" in tool_msgs[0]["content"]
+
+    def test_image_url_source(self):
+        """URL-type image source should be converted to data URL."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "url",
+                                "url": "https://example.com/img.jpg",
+                            },
+                        },
+                    ],
+                },
+            ],
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        user_msg = result["messages"][0]
+        img = user_msg["content"][0]
+        assert img["type"] == "image_url"
+        assert img["image_url"]["url"] == "https://example.com/img.jpg"
+
+    def test_multiple_system_blocks(self):
+        """Multiple system text blocks should all be included."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "system": [
+                {"type": "text", "text": "Rule 1"},
+                {"type": "text", "text": "Rule 2"},
+            ],
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        sys_msg = result["messages"][0]
+        assert sys_msg["role"] == "system"
+        assert isinstance(sys_msg["content"], list)
+        assert len(sys_msg["content"]) == 2
+
+    def test_response_empty_choices(self):
+        """Response with empty choices should handle gracefully."""
+        resp = {
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "test",
+            "choices": [],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(resp)
+        assert result["content"] == []
+        assert result["stop_reason"] == "end_turn"
+
+    def test_stream_only_usage_chunk(self):
+        """Usage-only chunk (no choices) should not crash."""
+        chunks = [
+            _make_chunk(delta={"role": "assistant", "content": ""}),
+            _make_chunk(delta={"content": "Hi"}),
+            _make_chunk(delta={}, finish_reason="stop"),
+        ]
+        # Add a trailing usage-only chunk (some providers do this)
+        chunks.append(
+            {
+                "id": "chatcmpl-123",
+                "object": "chat.completion.chunk",
+                "created": 1700000000,
+                "model": "test",
+                "choices": [],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            }
+        )
+        # Should not crash
+        events = list(AnthropicToOpenAIConverter.convert_stream(chunks))
+        assert events[-1]["type"] == "message_stop"
+
+
+class TestRoundtrip:
+    """Test that Anthropic -> OpenAI -> Anthropic roundtrips preserve semantics."""
+
+    def test_basic_text_roundtrip(self):
+        """Convert request and response roundtrip preserves content."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 1024,
+        }
+        openai_req, mapping = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+
+        # Simulate OpenAI response
+        openai_resp = {
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Hi there!"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+        }
+        anthropic_resp = AnthropicToOpenAIConverter.convert_response(
+            openai_resp, tool_name_mapping=mapping
+        )
+
+        assert anthropic_resp["type"] == "message"
+        assert anthropic_resp["role"] == "assistant"
+        assert anthropic_resp["stop_reason"] == "end_turn"
+        text_blocks = [b for b in anthropic_resp["content"] if b["type"] == "text"]
+        assert text_blocks[0]["text"] == "Hi there!"
+
+    def test_tool_use_roundtrip(self):
+        """Tool use with truncated names roundtrips correctly."""
+        long_name = "a" * 100
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Search"}],
+            "tools": [
+                {
+                    "name": long_name,
+                    "description": "Long tool",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"q": {"type": "string"}},
+                    },
+                }
+            ],
+            "max_tokens": 1024,
+        }
+        openai_req, mapping = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+
+        # The tool name in the request should be truncated
+        truncated_name = openai_req["tools"][0]["function"]["name"]
+        assert len(truncated_name) <= 64
+
+        # Simulate OpenAI response using the tool
+        openai_resp = {
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": truncated_name,
+                                    "arguments": '{"q":"test"}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        anthropic_resp = AnthropicToOpenAIConverter.convert_response(
+            openai_resp, tool_name_mapping=mapping
+        )
+
+        # Tool name should be restored to original
+        tool_blocks = [b for b in anthropic_resp["content"] if b["type"] == "tool_use"]
+        assert tool_blocks[0]["name"] == long_name
+        assert tool_blocks[0]["input"] == {"q": "test"}
+
 
 def _make_chunk(delta, finish_reason=None):
     """Helper to build an OpenAI streaming chunk."""

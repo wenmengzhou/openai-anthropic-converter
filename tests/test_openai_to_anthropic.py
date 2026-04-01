@@ -1089,3 +1089,196 @@ class TestEdgeCases:
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
         assert result["thinking"]["type"] == "enabled"
         assert result["thinking"]["budget_tokens"] == 8000
+
+    def test_consecutive_tool_messages_merge(self):
+        """Multiple consecutive tool messages should merge into one user message."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": "Use tools"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "a", "arguments": "{}"},
+                        },
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {"name": "b", "arguments": "{}"},
+                        },
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "result1"},
+                {"role": "tool", "tool_call_id": "call_2", "content": "result2"},
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        # The two tool messages should merge into a single user message
+        user_msgs = [m for m in result["messages"] if m["role"] == "user"]
+        # Last user message should have 2 tool_result blocks
+        last_user = user_msgs[-1]
+        tool_results = [b for b in last_user["content"] if b.get("type") == "tool_result"]
+        assert len(tool_results) == 2
+
+    def test_alternation_assistant_starts(self):
+        """If conversation starts with assistant, a placeholder user message is inserted."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "assistant", "content": "I already started talking"},
+                {"role": "user", "content": "Ok continue"},
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["messages"][0]["role"] == "user"
+
+    def test_schema_filtering_for_output_format(self):
+        """JSON schema should have unsupported fields filtered for Anthropic."""
+        openai_req = {
+            "model": "claude-sonnet-4.5-20250514",  # Supports output_format
+            "messages": [{"role": "user", "content": "Generate"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "test_schema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "count": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 100,
+                            }
+                        },
+                    },
+                },
+            },
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert "output_format" in result
+        schema = result["output_format"]["schema"]
+        props = schema["properties"]["count"]
+        # minimum/maximum should be removed and added to description
+        assert "minimum" not in props
+        assert "maximum" not in props
+        assert "description" in props
+
+    def test_tool_based_json_mode_for_old_model(self):
+        """Older models should use tool-based JSON mode instead of output_format."""
+        openai_req = {
+            "model": "claude-3-opus-20240229",  # Older model
+            "messages": [{"role": "user", "content": "Generate"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "test",
+                    "schema": {"type": "object", "properties": {"x": {"type": "string"}}},
+                },
+            },
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert "output_format" not in result
+        # Should have the JSON tool added
+        tool_names = [t.get("name") for t in result.get("tools", [])]
+        assert "json_tool_call" in tool_names
+        assert result["tool_choice"]["type"] == "tool"
+
+    def test_server_tool_use_stream(self):
+        """server_tool_use blocks should be handled in streaming."""
+        events = [
+            {"type": "message_start", "message": {"id": "msg_1", "model": "test", "usage": {}}},
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "server_tool_use",
+                    "id": "stu_1",
+                    "name": "web_search",
+                },
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": '{"query":'},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": '"test"}'},
+            },
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "tool_use"},
+                "usage": {"output_tokens": 10},
+            },
+            {"type": "message_stop"},
+        ]
+        chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
+        # Should have tool_calls in the chunks
+        tool_chunks = [c for c in chunks if c["choices"][0]["delta"].get("tool_calls")]
+        assert len(tool_chunks) >= 1
+        # First tool chunk should have the function name
+        first_tc = tool_chunks[0]["choices"][0]["delta"]["tool_calls"][0]
+        assert first_tc["function"]["name"] == "web_search"
+
+    def test_schema_with_refs_resolved(self):
+        """JSON schema $refs should be resolved for Anthropic."""
+        openai_req = {
+            "model": "claude-sonnet-4.5-20250514",
+            "messages": [{"role": "user", "content": "Generate"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "test",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "item": {"$ref": "#/$defs/Item"},
+                        },
+                        "$defs": {
+                            "Item": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                },
+                            }
+                        },
+                    },
+                },
+            },
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert "output_format" in result
+        schema = result["output_format"]["schema"]
+        # $ref should be resolved
+        item_prop = schema["properties"]["item"]
+        assert "$ref" not in item_prop
+        assert item_prop["type"] == "object"
+
+    def test_ping_event_ignored(self):
+        """Anthropic ping events should be silently ignored."""
+        events = [
+            {"type": "message_start", "message": {"id": "msg_1", "model": "test", "usage": {}}},
+            {"type": "ping"},
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "Hi"},
+            },
+            {"type": "content_block_stop", "index": 0},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {}},
+            {"type": "message_stop"},
+        ]
+        chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
+        # ping should not produce any chunk
+        assert all(c.get("object") == "chat.completion.chunk" for c in chunks)
