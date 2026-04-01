@@ -89,11 +89,13 @@ class OpenAIToAnthropicSSEStream:
         # Handle content type transitions
         if has_text:
             events.extend(self._ensure_content_block("text"))
-            events.append({
-                "type": "content_block_delta",
-                "index": self.current_block_index,
-                "delta": {"type": "text_delta", "text": delta["content"]},
-            })
+            events.append(
+                {
+                    "type": "content_block_delta",
+                    "index": self.current_block_index,
+                    "delta": {"type": "text_delta", "text": delta["content"]},
+                }
+            )
 
         elif has_tool_calls:
             for tc in delta["tool_calls"]:
@@ -110,28 +112,32 @@ class OpenAIToAnthropicSSEStream:
 
                     self.current_content_type = "tool_use"
                     self.sent_content_block_start = True
-                    events.append({
-                        "type": "content_block_start",
-                        "index": self.current_block_index,
-                        "content_block": {
-                            "type": "tool_use",
-                            "id": tc_id,
-                            "name": original_name,
-                            "input": {},
-                        },
-                    })
+                    events.append(
+                        {
+                            "type": "content_block_start",
+                            "index": self.current_block_index,
+                            "content_block": {
+                                "type": "tool_use",
+                                "id": tc_id,
+                                "name": original_name,
+                                "input": {},
+                            },
+                        }
+                    )
                 elif func.get("arguments"):
                     # Continuing tool arguments
                     if not self.sent_content_block_start:
                         events.extend(self._ensure_content_block("tool_use"))
-                    events.append({
-                        "type": "content_block_delta",
-                        "index": self.current_block_index,
-                        "delta": {
-                            "type": "input_json_delta",
-                            "partial_json": func["arguments"],
-                        },
-                    })
+                    events.append(
+                        {
+                            "type": "content_block_delta",
+                            "index": self.current_block_index,
+                            "delta": {
+                                "type": "input_json_delta",
+                                "partial_json": func["arguments"],
+                            },
+                        }
+                    )
 
         elif has_thinking:
             for tb in delta["thinking_blocks"]:
@@ -140,18 +146,22 @@ class OpenAIToAnthropicSSEStream:
 
                 if thinking_text:
                     events.extend(self._ensure_content_block("thinking"))
-                    events.append({
-                        "type": "content_block_delta",
-                        "index": self.current_block_index,
-                        "delta": {"type": "thinking_delta", "thinking": thinking_text},
-                    })
+                    events.append(
+                        {
+                            "type": "content_block_delta",
+                            "index": self.current_block_index,
+                            "delta": {"type": "thinking_delta", "thinking": thinking_text},
+                        }
+                    )
                 if signature:
                     events.extend(self._ensure_content_block("thinking"))
-                    events.append({
-                        "type": "content_block_delta",
-                        "index": self.current_block_index,
-                        "delta": {"type": "signature_delta", "signature": signature},
-                    })
+                    events.append(
+                        {
+                            "type": "content_block_delta",
+                            "index": self.current_block_index,
+                            "delta": {"type": "signature_delta", "signature": signature},
+                        }
+                    )
 
         # Handle finish
         if finish_reason:
@@ -164,11 +174,13 @@ class OpenAIToAnthropicSSEStream:
             if usage:
                 self._update_usage(usage)
 
-            events.append({
-                "type": "message_delta",
-                "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-                "usage": dict(self._usage),
-            })
+            events.append(
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+                    "usage": dict(self._usage),
+                }
+            )
             events.append({"type": "message_stop"})
 
         return events
@@ -213,28 +225,34 @@ class OpenAIToAnthropicSSEStream:
         self.sent_content_block_start = True
 
         if block_type == "text":
-            events.append({
-                "type": "content_block_start",
-                "index": self.current_block_index,
-                "content_block": {"type": "text", "text": ""},
-            })
+            events.append(
+                {
+                    "type": "content_block_start",
+                    "index": self.current_block_index,
+                    "content_block": {"type": "text", "text": ""},
+                }
+            )
         elif block_type == "tool_use":
-            events.append({
-                "type": "content_block_start",
-                "index": self.current_block_index,
-                "content_block": {
-                    "type": "tool_use",
-                    "id": f"toolu_{uuid.uuid4().hex[:12]}",
-                    "name": "",
-                    "input": {},
-                },
-            })
+            events.append(
+                {
+                    "type": "content_block_start",
+                    "index": self.current_block_index,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": f"toolu_{uuid.uuid4().hex[:12]}",
+                        "name": "",
+                        "input": {},
+                    },
+                }
+            )
         elif block_type == "thinking":
-            events.append({
-                "type": "content_block_start",
-                "index": self.current_block_index,
-                "content_block": {"type": "thinking", "thinking": ""},
-            })
+            events.append(
+                {
+                    "type": "content_block_start",
+                    "index": self.current_block_index,
+                    "content_block": {"type": "thinking", "thinking": ""},
+                }
+            )
 
         return events
 
@@ -242,10 +260,12 @@ class OpenAIToAnthropicSSEStream:
         """Close the current content block if one is open."""
         events: List[Dict[str, Any]] = []
         if self.sent_content_block_start:
-            events.append({
-                "type": "content_block_stop",
-                "index": self.current_block_index,
-            })
+            events.append(
+                {
+                    "type": "content_block_stop",
+                    "index": self.current_block_index,
+                }
+            )
             self.current_block_index += 1
             self.sent_content_block_start = False
             self.current_content_type = None

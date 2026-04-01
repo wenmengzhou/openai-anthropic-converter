@@ -2,9 +2,6 @@
 Tests for Anthropic -> OpenAI conversion.
 """
 
-import json
-import pytest
-
 from openai_anthropic_converter import AnthropicToOpenAIConverter
 
 
@@ -54,14 +51,16 @@ class TestRequestConversion:
         anthropic_req = {
             "model": "claude-sonnet-4-20250514",
             "messages": [{"role": "user", "content": "Search"}],
-            "tools": [{
-                "name": "search",
-                "description": "Search the web",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"query": {"type": "string"}},
-                },
-            }],
+            "tools": [
+                {
+                    "name": "search",
+                    "description": "Search the web",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                    },
+                }
+            ],
             "max_tokens": 1024,
         }
         result, mapping = AnthropicToOpenAIConverter.convert_request(anthropic_req)
@@ -165,20 +164,22 @@ class TestRequestConversion:
     def test_image_in_user_message(self):
         anthropic_req = {
             "model": "claude-sonnet-4-20250514",
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "What is this?"},
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": "iVBOR...",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What is this?"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "iVBOR...",
+                            },
                         },
-                    },
-                ],
-            }],
+                    ],
+                }
+            ],
             "max_tokens": 1024,
         }
         result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
@@ -271,14 +272,16 @@ class TestResponseConversion:
             "object": "chat.completion",
             "created": 1700000000,
             "model": "claude-sonnet-4-20250514",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": "Hello!",
-                },
-                "finish_reason": "stop",
-            }],
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Hello!",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
             "usage": {
                 "prompt_tokens": 10,
                 "completion_tokens": 5,
@@ -300,22 +303,26 @@ class TestResponseConversion:
             "object": "chat.completion",
             "created": 1700000000,
             "model": "claude-sonnet-4-20250514",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": "Searching...",
-                    "tool_calls": [{
-                        "id": "call_123",
-                        "type": "function",
-                        "function": {
-                            "name": "search",
-                            "arguments": '{"query":"python"}',
-                        },
-                    }],
-                },
-                "finish_reason": "tool_calls",
-            }],
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Searching...",
+                        "tool_calls": [
+                            {
+                                "id": "call_123",
+                                "type": "function",
+                                "function": {
+                                    "name": "search",
+                                    "arguments": '{"query":"python"}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
             "usage": {"prompt_tokens": 20, "completion_tokens": 15, "total_tokens": 35},
         }
         result = AnthropicToOpenAIConverter.convert_response(openai_resp)
@@ -343,24 +350,26 @@ class TestResponseConversion:
             "object": "chat.completion",
             "created": 1700000000,
             "model": "test",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {"name": truncated, "arguments": "{}"},
-                    }],
-                },
-                "finish_reason": "tool_calls",
-            }],
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": truncated, "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         }
-        result = AnthropicToOpenAIConverter.convert_response(
-            openai_resp, tool_name_mapping=mapping
-        )
+        result = AnthropicToOpenAIConverter.convert_response(openai_resp, tool_name_mapping=mapping)
 
         tool_blocks = [b for b in result["content"] if b["type"] == "tool_use"]
         assert tool_blocks[0]["name"] == long_name
@@ -371,17 +380,23 @@ class TestResponseConversion:
             "object": "chat.completion",
             "created": 1700000000,
             "model": "test",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": "Answer",
-                    "thinking_blocks": [
-                        {"type": "thinking", "thinking": "Let me think...", "signature": "sig123"},
-                    ],
-                },
-                "finish_reason": "stop",
-            }],
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Answer",
+                        "thinking_blocks": [
+                            {
+                                "type": "thinking",
+                                "thinking": "Let me think...",
+                                "signature": "sig123",
+                            },
+                        ],
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
             "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
         }
         result = AnthropicToOpenAIConverter.convert_response(openai_resp)
@@ -404,11 +419,13 @@ class TestResponseConversion:
                 "object": "chat.completion",
                 "created": 1700000000,
                 "model": "test",
-                "choices": [{
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "Hi"},
-                    "finish_reason": openai_reason,
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Hi"},
+                        "finish_reason": openai_reason,
+                    }
+                ],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
             }
             result = AnthropicToOpenAIConverter.convert_response(resp)
@@ -420,11 +437,13 @@ class TestResponseConversion:
             "object": "chat.completion",
             "created": 1700000000,
             "model": "test",
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": "Hi"},
-                "finish_reason": "stop",
-            }],
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Hi"},
+                    "finish_reason": "stop",
+                }
+            ],
             "usage": {
                 "prompt_tokens": 150,
                 "completion_tokens": 50,
@@ -454,44 +473,52 @@ class TestStreamConversion:
                 "object": "chat.completion.chunk",
                 "created": 1700000000,
                 "model": "claude-sonnet-4-20250514",
-                "choices": [{
-                    "index": 0,
-                    "delta": {"role": "assistant", "content": ""},
-                    "finish_reason": None,
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": ""},
+                        "finish_reason": None,
+                    }
+                ],
             },
             {
                 "id": "chatcmpl-123",
                 "object": "chat.completion.chunk",
                 "created": 1700000000,
                 "model": "claude-sonnet-4-20250514",
-                "choices": [{
-                    "index": 0,
-                    "delta": {"content": "Hello"},
-                    "finish_reason": None,
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": "Hello"},
+                        "finish_reason": None,
+                    }
+                ],
             },
             {
                 "id": "chatcmpl-123",
                 "object": "chat.completion.chunk",
                 "created": 1700000000,
                 "model": "claude-sonnet-4-20250514",
-                "choices": [{
-                    "index": 0,
-                    "delta": {"content": " world!"},
-                    "finish_reason": None,
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": " world!"},
+                        "finish_reason": None,
+                    }
+                ],
             },
             {
                 "id": "chatcmpl-123",
                 "object": "chat.completion.chunk",
                 "created": 1700000000,
                 "model": "claude-sonnet-4-20250514",
-                "choices": [{
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "stop",
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ],
             },
         ]
 
@@ -506,7 +533,8 @@ class TestStreamConversion:
 
         # Should have text deltas
         text_deltas = [
-            e for e in events
+            e
+            for e in events
             if e["type"] == "content_block_delta" and e["delta"]["type"] == "text_delta"
         ]
         assert len(text_deltas) == 2
@@ -525,56 +553,68 @@ class TestStreamConversion:
                 "object": "chat.completion.chunk",
                 "created": 1700000000,
                 "model": "test",
-                "choices": [{
-                    "index": 0,
-                    "delta": {"role": "assistant", "content": ""},
-                    "finish_reason": None,
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": ""},
+                        "finish_reason": None,
+                    }
+                ],
             },
             {
                 "id": "chatcmpl-123",
                 "object": "chat.completion.chunk",
                 "created": 1700000000,
                 "model": "test",
-                "choices": [{
-                    "index": 0,
-                    "delta": {
-                        "tool_calls": [{
-                            "index": 0,
-                            "id": "call_123",
-                            "type": "function",
-                            "function": {"name": "search", "arguments": ""},
-                        }],
-                    },
-                    "finish_reason": None,
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_123",
+                                    "type": "function",
+                                    "function": {"name": "search", "arguments": ""},
+                                }
+                            ],
+                        },
+                        "finish_reason": None,
+                    }
+                ],
             },
             {
                 "id": "chatcmpl-123",
                 "object": "chat.completion.chunk",
                 "created": 1700000000,
                 "model": "test",
-                "choices": [{
-                    "index": 0,
-                    "delta": {
-                        "tool_calls": [{
-                            "index": 0,
-                            "function": {"arguments": '{"query":"python"}'},
-                        }],
-                    },
-                    "finish_reason": None,
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {"arguments": '{"query":"python"}'},
+                                }
+                            ],
+                        },
+                        "finish_reason": None,
+                    }
+                ],
             },
             {
                 "id": "chatcmpl-123",
                 "object": "chat.completion.chunk",
                 "created": 1700000000,
                 "model": "test",
-                "choices": [{
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "tool_calls",
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "tool_calls",
+                    }
+                ],
             },
         ]
 
@@ -582,7 +622,8 @@ class TestStreamConversion:
 
         # Should have tool_use content_block_start
         tool_starts = [
-            e for e in events
+            e
+            for e in events
             if e["type"] == "content_block_start"
             and e.get("content_block", {}).get("type") == "tool_use"
         ]
@@ -591,9 +632,9 @@ class TestStreamConversion:
 
         # Should have input_json_delta
         json_deltas = [
-            e for e in events
-            if e["type"] == "content_block_delta"
-            and e["delta"]["type"] == "input_json_delta"
+            e
+            for e in events
+            if e["type"] == "content_block_delta" and e["delta"]["type"] == "input_json_delta"
         ]
         assert len(json_deltas) >= 1
 
@@ -615,49 +656,56 @@ class TestStreamConversion:
                 "object": "chat.completion.chunk",
                 "created": 1700000000,
                 "model": "test",
-                "choices": [{
-                    "index": 0,
-                    "delta": {"role": "assistant"},
-                    "finish_reason": None,
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant"},
+                        "finish_reason": None,
+                    }
+                ],
             },
             {
                 "id": "chatcmpl-123",
                 "object": "chat.completion.chunk",
                 "created": 1700000000,
                 "model": "test",
-                "choices": [{
-                    "index": 0,
-                    "delta": {
-                        "tool_calls": [{
-                            "index": 0,
-                            "id": "call_1",
-                            "type": "function",
-                            "function": {"name": truncated, "arguments": ""},
-                        }],
-                    },
-                    "finish_reason": None,
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": truncated, "arguments": ""},
+                                }
+                            ],
+                        },
+                        "finish_reason": None,
+                    }
+                ],
             },
             {
                 "id": "chatcmpl-123",
                 "object": "chat.completion.chunk",
                 "created": 1700000000,
                 "model": "test",
-                "choices": [{
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "tool_calls",
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "tool_calls",
+                    }
+                ],
             },
         ]
 
-        events = list(AnthropicToOpenAIConverter.convert_stream(
-            chunks, tool_name_mapping=mapping
-        ))
+        events = list(AnthropicToOpenAIConverter.convert_stream(chunks, tool_name_mapping=mapping))
 
         tool_starts = [
-            e for e in events
+            e
+            for e in events
             if e["type"] == "content_block_start"
             and e.get("content_block", {}).get("type") == "tool_use"
         ]

@@ -22,8 +22,7 @@ import json
 import logging
 import os
 import sys
-import time
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, AsyncIterator, Dict
 
 import httpx
 import uvicorn
@@ -56,6 +55,7 @@ def configure(**kwargs: Any) -> None:
 
 # ── Health check ────────────────────────────────────────────────────────
 
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -74,6 +74,7 @@ async def list_models():
 
 
 # ── Chat Completions ───────────────────────────────────────────────────
+
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
@@ -197,7 +198,9 @@ async def _stream_response(
             error_chunk = {"error": {"message": "Backend request timed out", "type": "timeout"}}
             yield f"data: {json.dumps(error_chunk)}\n\n"
         except httpx.ConnectError as e:
-            error_chunk = {"error": {"message": f"Backend connection error: {e}", "type": "connection_error"}}
+            error_chunk = {
+                "error": {"message": f"Backend connection error: {e}", "type": "connection_error"}
+            }
             yield f"data: {json.dumps(error_chunk)}\n\n"
 
 
@@ -208,7 +211,6 @@ async def _parse_and_convert_sse(
 
     async def _anthropic_events() -> AsyncIterator[Dict[str, Any]]:
         """Parse raw SSE lines into Anthropic event dicts."""
-        buffer = ""
         async for line in resp.aiter_lines():
             line = line.strip()
             if not line:
@@ -231,6 +233,7 @@ async def _parse_and_convert_sse(
 
 # ── CLI entry point ─────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="OpenAI-compatible API server backed by Anthropic Messages API"
@@ -249,7 +252,9 @@ def main():
     parser.add_argument("--port", type=int, default=8001, help="Bind port (default: 8001)")
     parser.add_argument("--timeout", type=int, default=300, help="Backend timeout in seconds")
     parser.add_argument("--default-max-tokens", type=int, default=4096)
-    parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
+    parser.add_argument(
+        "--log-level", default="info", choices=["debug", "info", "warning", "error"]
+    )
 
     args = parser.parse_args()
 

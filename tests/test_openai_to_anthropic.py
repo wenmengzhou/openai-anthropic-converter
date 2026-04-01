@@ -3,7 +3,6 @@ Tests for OpenAI -> Anthropic conversion.
 """
 
 import json
-import pytest
 
 from openai_anthropic_converter import OpenAIToAnthropicConverter
 
@@ -55,18 +54,20 @@ class TestRequestConversion:
         openai_req = {
             "model": "claude-sonnet-4-20250514",
             "messages": [{"role": "user", "content": "Search for python"}],
-            "tools": [{
-                "type": "function",
-                "function": {
-                    "name": "search",
-                    "description": "Search the web",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"query": {"type": "string"}},
-                        "required": ["query"],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search",
+                        "description": "Search the web",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"query": {"type": "string"}},
+                            "required": ["query"],
+                        },
                     },
-                },
-            }],
+                }
+            ],
             "max_tokens": 1024,
         }
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
@@ -151,11 +152,13 @@ class TestRequestConversion:
                 {
                     "role": "assistant",
                     "content": None,
-                    "tool_calls": [{
-                        "id": "call_123",
-                        "type": "function",
-                        "function": {"name": "search", "arguments": '{"query":"python"}'},
-                    }],
+                    "tool_calls": [
+                        {
+                            "id": "call_123",
+                            "type": "function",
+                            "function": {"name": "search", "arguments": '{"query":"python"}'},
+                        }
+                    ],
                 },
                 {
                     "role": "tool",
@@ -180,16 +183,18 @@ class TestRequestConversion:
     def test_image_url_conversion(self):
         openai_req = {
             "model": "claude-sonnet-4-20250514",
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "What is this?"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQ"},
-                    },
-                ],
-            }],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What is this?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQ"},
+                        },
+                    ],
+                }
+            ],
         }
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
         user_content = result["messages"][0]["content"]
@@ -372,19 +377,13 @@ class TestStreamConversion:
         assert chunks[0]["choices"][0]["delta"]["role"] == "assistant"
 
         # Text chunks
-        text_chunks = [
-            c for c in chunks
-            if c["choices"][0]["delta"].get("content")
-        ]
+        text_chunks = [c for c in chunks if c["choices"][0]["delta"].get("content")]
         assert len(text_chunks) == 2
         assert text_chunks[0]["choices"][0]["delta"]["content"] == "Hello"
         assert text_chunks[1]["choices"][0]["delta"]["content"] == " world!"
 
         # Last non-empty choice should have finish_reason
-        finish_chunks = [
-            c for c in chunks
-            if c["choices"][0].get("finish_reason")
-        ]
+        finish_chunks = [c for c in chunks if c["choices"][0].get("finish_reason")]
         assert len(finish_chunks) == 1
         assert finish_chunks[0]["choices"][0]["finish_reason"] == "stop"
 
@@ -434,10 +433,7 @@ class TestStreamConversion:
         chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
 
         # Should have tool call chunks
-        tool_chunks = [
-            c for c in chunks
-            if c["choices"][0]["delta"].get("tool_calls")
-        ]
+        tool_chunks = [c for c in chunks if c["choices"][0]["delta"].get("tool_calls")]
         assert len(tool_chunks) >= 1
         # First tool chunk should have id and name
         first_tc = tool_chunks[0]["choices"][0]["delta"]["tool_calls"][0]
@@ -490,10 +486,7 @@ class TestStreamConversion:
 
         chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
 
-        thinking_chunks = [
-            c for c in chunks
-            if c["choices"][0]["delta"].get("thinking_blocks")
-        ]
+        thinking_chunks = [c for c in chunks if c["choices"][0]["delta"].get("thinking_blocks")]
         assert len(thinking_chunks) >= 1
 
 

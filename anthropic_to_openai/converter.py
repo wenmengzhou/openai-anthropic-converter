@@ -129,9 +129,7 @@ class AnthropicToOpenAIConverter:
         Yields:
             Anthropic SSE event dicts
         """
-        return _convert_stream(
-            openai_chunks, model=model, tool_name_mapping=tool_name_mapping
-        )
+        return _convert_stream(openai_chunks, model=model, tool_name_mapping=tool_name_mapping)
 
     @staticmethod
     async def aconvert_stream(

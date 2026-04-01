@@ -5,10 +5,10 @@ These mirror the OpenAI wire format for /v1/chat/completions.
 
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from typing_extensions import NotRequired, TypedDict
-
+from typing_extensions import TypedDict
 
 # ── Message Types ───────────────────────────────────────────────────────
+
 
 class OpenAISystemMessage(TypedDict, total=False):
     role: Literal["system"]
@@ -65,6 +65,7 @@ OpenAIMessage = Union[
 
 # ── Tool Definitions ────────────────────────────────────────────────────
 
+
 class OpenAIFunctionDef(TypedDict, total=False):
     name: str
     description: str
@@ -90,6 +91,7 @@ OpenAIToolChoice = Union[str, OpenAIToolChoiceObject]  # "auto" | "required" | "
 
 # ── Content Objects ─────────────────────────────────────────────────────
 
+
 class OpenAITextContent(TypedDict, total=False):
     type: Literal["text"]
     text: str
@@ -105,6 +107,7 @@ class OpenAIImageContent(TypedDict, total=False):
 
 
 # ── Usage ───────────────────────────────────────────────────────────────
+
 
 class OpenAIPromptTokensDetails(TypedDict, total=False):
     cached_tokens: int
@@ -126,6 +129,7 @@ class OpenAIUsage(TypedDict, total=False):
 
 # ── Response Format ─────────────────────────────────────────────────────
 
+
 class OpenAIJsonSchema(TypedDict, total=False):
     name: str
     schema: Dict[str, Any]
@@ -138,6 +142,7 @@ class OpenAIResponseFormat(TypedDict, total=False):
 
 
 # ── Request ─────────────────────────────────────────────────────────────
+
 
 class OpenAIRequest(TypedDict, total=False):
     model: str
@@ -158,6 +163,7 @@ class OpenAIRequest(TypedDict, total=False):
 
 
 # ── Response ────────────────────────────────────────────────────────────
+
 
 class OpenAIResponseMessage(TypedDict, total=False):
     role: str
@@ -183,6 +189,7 @@ class OpenAIResponse(TypedDict, total=False):
 
 
 # ── Streaming ───────────────────────────────────────────────────────────
+
 
 class OpenAIDelta(TypedDict, total=False):
     role: str

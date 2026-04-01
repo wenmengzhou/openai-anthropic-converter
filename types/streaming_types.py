@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from typing_extensions import NotRequired, TypedDict
 
-
 # ── Delta Types ─────────────────────────────────────────────────────────
+
 
 class AnthropicTextDelta(TypedDict):
     type: Literal["text_delta"]
@@ -39,6 +39,7 @@ AnthropicDelta = Union[
 
 # ── Content Block Types for Start Events ────────────────────────────────
 
+
 class AnthropicTextBlockStart(TypedDict):
     type: Literal["text"]
     text: str
@@ -65,6 +66,7 @@ AnthropicContentBlockStart = Union[
 
 
 # ── SSE Event Types ─────────────────────────────────────────────────────
+
 
 class AnthropicUsageDelta(TypedDict, total=False):
     input_tokens: int

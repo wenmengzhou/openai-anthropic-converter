@@ -4,7 +4,6 @@ Anthropic SSE -> OpenAI streaming chunks conversion.
 Converts Anthropic Server-Sent Events into OpenAI chat.completion.chunk format.
 """
 
-import json
 import time
 import uuid
 from typing import Any, AsyncIterable, AsyncIterator, Dict, Iterable, Iterator, Optional
@@ -68,8 +67,8 @@ class AnthropicSSEToOpenAIStream:
         if usage_info:
             chunk["usage"] = {
                 "prompt_tokens": (usage_info.get("input_tokens", 0) or 0)
-                    + (usage_info.get("cache_read_input_tokens", 0) or 0)
-                    + (usage_info.get("cache_creation_input_tokens", 0) or 0),
+                + (usage_info.get("cache_read_input_tokens", 0) or 0)
+                + (usage_info.get("cache_creation_input_tokens", 0) or 0),
                 "completion_tokens": usage_info.get("output_tokens", 0) or 0,
                 "total_tokens": 0,
             }
@@ -88,17 +87,21 @@ class AnthropicSSEToOpenAIStream:
             self.current_tool_call_id = content_block.get("id", "")
             self.current_tool_name = content_block.get("name", "")
             # Emit initial tool call chunk
-            return self._make_chunk(delta={
-                "tool_calls": [{
-                    "index": self.tool_index,
-                    "id": self.current_tool_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": self.current_tool_name,
-                        "arguments": "",
-                    },
-                }],
-            })
+            return self._make_chunk(
+                delta={
+                    "tool_calls": [
+                        {
+                            "index": self.tool_index,
+                            "id": self.current_tool_call_id,
+                            "type": "function",
+                            "function": {
+                                "name": self.current_tool_name,
+                                "arguments": "",
+                            },
+                        }
+                    ],
+                }
+            )
         elif block_type == "thinking":
             return None  # Will emit on delta
         else:
@@ -117,33 +120,45 @@ class AnthropicSSEToOpenAIStream:
         elif delta_type == "input_json_delta":
             partial_json = delta.get("partial_json", "")
             if partial_json:
-                return self._make_chunk(delta={
-                    "tool_calls": [{
-                        "index": self.tool_index,
-                        "function": {"arguments": partial_json},
-                    }],
-                })
+                return self._make_chunk(
+                    delta={
+                        "tool_calls": [
+                            {
+                                "index": self.tool_index,
+                                "function": {"arguments": partial_json},
+                            }
+                        ],
+                    }
+                )
 
         elif delta_type == "thinking_delta":
             thinking = delta.get("thinking", "")
             if thinking:
-                return self._make_chunk(delta={
-                    "thinking_blocks": [{
-                        "type": "thinking",
-                        "thinking": thinking,
-                    }],
-                })
+                return self._make_chunk(
+                    delta={
+                        "thinking_blocks": [
+                            {
+                                "type": "thinking",
+                                "thinking": thinking,
+                            }
+                        ],
+                    }
+                )
 
         elif delta_type == "signature_delta":
             signature = delta.get("signature", "")
             if signature:
-                return self._make_chunk(delta={
-                    "thinking_blocks": [{
-                        "type": "thinking",
-                        "thinking": "",
-                        "signature": signature,
-                    }],
-                })
+                return self._make_chunk(
+                    delta={
+                        "thinking_blocks": [
+                            {
+                                "type": "thinking",
+                                "thinking": "",
+                                "signature": signature,
+                            }
+                        ],
+                    }
+                )
 
         return None
 
@@ -153,7 +168,9 @@ class AnthropicSSEToOpenAIStream:
         usage = event.get("usage", {})
 
         stop_reason = delta_body.get("stop_reason")
-        finish_reason = ANTHROPIC_TO_OPENAI_FINISH_REASON.get(stop_reason, "stop") if stop_reason else "stop"
+        finish_reason = (
+            ANTHROPIC_TO_OPENAI_FINISH_REASON.get(stop_reason, "stop") if stop_reason else "stop"
+        )
 
         chunk = self._make_chunk(
             delta={},
@@ -189,11 +206,13 @@ class AnthropicSSEToOpenAIStream:
             "object": "chat.completion.chunk",
             "created": self.created,
             "model": self.model,
-            "choices": [{
-                "index": 0,
-                "delta": delta,
-                "finish_reason": finish_reason,
-            }],
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": delta,
+                    "finish_reason": finish_reason,
+                }
+            ],
         }
 
 

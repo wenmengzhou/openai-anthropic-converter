@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from typing_extensions import NotRequired, TypedDict
 
-
 # ── Content Blocks ──────────────────────────────────────────────────────
+
 
 class AnthropicTextBlock(TypedDict):
     type: Literal["text"]
@@ -62,6 +62,7 @@ AnthropicContentBlock = Union[
 
 # ── Tool Definitions ────────────────────────────────────────────────────
 
+
 class AnthropicInputSchema(TypedDict, total=False):
     type: str
     properties: Dict[str, Any]
@@ -85,6 +86,7 @@ class AnthropicToolChoice(TypedDict, total=False):
 
 # ── System Message ──────────────────────────────────────────────────────
 
+
 class AnthropicSystemMessageContent(TypedDict, total=False):
     type: str
     text: str
@@ -93,12 +95,14 @@ class AnthropicSystemMessageContent(TypedDict, total=False):
 
 # ── Thinking Param ──────────────────────────────────────────────────────
 
+
 class AnthropicThinkingParam(TypedDict, total=False):
     type: str  # "enabled" | "disabled" | "adaptive"
     budget_tokens: int
 
 
 # ── Usage ───────────────────────────────────────────────────────────────
+
 
 class AnthropicUsage(TypedDict, total=False):
     input_tokens: int
@@ -110,6 +114,7 @@ class AnthropicUsage(TypedDict, total=False):
 
 
 # ── Messages ────────────────────────────────────────────────────────────
+
 
 class AnthropicUserMessage(TypedDict):
     role: Literal["user"]
@@ -126,11 +131,13 @@ AnthropicMessage = Union[AnthropicUserMessage, AnthropicAssistantMessage]
 
 # ── Metadata ────────────────────────────────────────────────────────────
 
+
 class AnthropicMetadata(TypedDict, total=False):
     user_id: str
 
 
 # ── Output Format ───────────────────────────────────────────────────────
+
 
 class AnthropicOutputFormat(TypedDict, total=False):
     type: str  # "json_schema"
@@ -138,6 +145,7 @@ class AnthropicOutputFormat(TypedDict, total=False):
 
 
 # ── Request ─────────────────────────────────────────────────────────────
+
 
 class AnthropicRequest(TypedDict, total=False):
     model: str
@@ -159,6 +167,7 @@ class AnthropicRequest(TypedDict, total=False):
 
 
 # ── Response ────────────────────────────────────────────────────────────
+
 
 class AnthropicResponse(TypedDict, total=False):
     id: str

@@ -24,8 +24,7 @@ import json
 import logging
 import os
 import sys
-import time
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, AsyncIterator, Dict
 
 import httpx
 import uvicorn
@@ -56,12 +55,14 @@ def configure(**kwargs: Any) -> None:
 
 # ── Health check ────────────────────────────────────────────────────────
 
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
 
 # ── Messages endpoint ──────────────────────────────────────────────────
+
 
 @app.post("/v1/messages")
 async def messages(request: Request):
@@ -74,10 +75,13 @@ async def messages(request: Request):
     try:
         anthropic_request = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail={
-            "type": "error",
-            "error": {"type": "invalid_request_error", "message": "Invalid JSON body"},
-        })
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "type": "error",
+                "error": {"type": "invalid_request_error", "message": "Invalid JSON body"},
+            },
+        )
 
     is_stream = anthropic_request.get("stream", False)
 
@@ -147,7 +151,8 @@ async def _non_stream_response(
     # Convert OpenAI response -> Anthropic response
     try:
         anthropic_response = AnthropicToOpenAIConverter.convert_response(
-            openai_response, tool_name_mapping=tool_name_mapping,
+            openai_response,
+            tool_name_mapping=tool_name_mapping,
         )
     except Exception as e:
         logger.error("Response conversion failed: %s", e)
@@ -234,6 +239,7 @@ async def _parse_and_convert_sse(
 
 # ── Count tokens endpoint (stub) ───────────────────────────────────────
 
+
 @app.post("/v1/messages/count_tokens")
 async def count_tokens(request: Request):
     """Stub token counting endpoint. Returns a rough estimate."""
@@ -268,6 +274,7 @@ async def count_tokens(request: Request):
 
 # ── Error helpers ───────────────────────────────────────────────────────
 
+
 def _anthropic_error(status_code: int, error_type: str, message: str) -> JSONResponse:
     """Create an Anthropic-format error response."""
     return JSONResponse(
@@ -296,6 +303,7 @@ def _map_status_to_error_type(status_code: int) -> str:
 
 # ── CLI entry point ─────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Anthropic-compatible API server backed by OpenAI ChatCompletion API"
@@ -313,7 +321,9 @@ def main():
     parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8002, help="Bind port (default: 8002)")
     parser.add_argument("--timeout", type=int, default=300, help="Backend timeout in seconds")
-    parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
+    parser.add_argument(
+        "--log-level", default="info", choices=["debug", "info", "warning", "error"]
+    )
 
     args = parser.parse_args()
 

@@ -4,7 +4,7 @@ Shared utilities for protocol conversion.
 
 import hashlib
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from .constants import (
     OPENAI_MAX_TOOL_NAME_LENGTH,
@@ -68,10 +68,14 @@ def filter_schema_for_anthropic(schema: Dict[str, Any]) -> Dict[str, Any]:
         return schema
 
     unsupported_fields = {
-        "maxItems", "minItems",
-        "minimum", "maximum",
-        "exclusiveMinimum", "exclusiveMaximum",
-        "minLength", "maxLength",
+        "maxItems",
+        "minItems",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "minLength",
+        "maxLength",
     }
 
     constraint_labels = {
@@ -88,9 +92,7 @@ def filter_schema_for_anthropic(schema: Dict[str, Any]) -> Dict[str, Any]:
     constraint_descriptions = []
     for field in unsupported_fields:
         if field in schema:
-            constraint_descriptions.append(
-                constraint_labels[field].format(schema[field])
-            )
+            constraint_descriptions.append(constraint_labels[field].format(schema[field]))
 
     result: Dict[str, Any] = {}
 
@@ -108,15 +110,11 @@ def filter_schema_for_anthropic(schema: Dict[str, Any]) -> Dict[str, Any]:
             continue
 
         if key == "properties" and isinstance(value, dict):
-            result[key] = {
-                k: filter_schema_for_anthropic(v) for k, v in value.items()
-            }
+            result[key] = {k: filter_schema_for_anthropic(v) for k, v in value.items()}
         elif key == "items" and isinstance(value, dict):
             result[key] = filter_schema_for_anthropic(value)
         elif key == "$defs" and isinstance(value, dict):
-            result[key] = {
-                k: filter_schema_for_anthropic(v) for k, v in value.items()
-            }
+            result[key] = {k: filter_schema_for_anthropic(v) for k, v in value.items()}
         elif key in ("anyOf", "allOf", "oneOf") and isinstance(value, list):
             result[key] = [filter_schema_for_anthropic(item) for item in value]
         else:

@@ -7,7 +7,7 @@ Converts Anthropic Messages API responses to OpenAI ChatCompletion format.
 import json
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..constants import ANTHROPIC_TO_OPENAI_FINISH_REASON, RESPONSE_FORMAT_TOOL_NAME
 
@@ -68,10 +68,12 @@ def extract_response_content(
         if block.get("citations") is not None:
             if citations is None:
                 citations = []
-            citations.append([
-                {**citation, "supported_text": block.get("text", "")}
-                for citation in block["citations"]
-            ])
+            citations.append(
+                [
+                    {**citation, "supported_text": block.get("text", "")}
+                    for citation in block["citations"]
+                ]
+            )
 
     # Build reasoning_content from thinking blocks
     if thinking_blocks:

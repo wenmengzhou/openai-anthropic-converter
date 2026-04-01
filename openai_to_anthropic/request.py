@@ -5,7 +5,6 @@ Converts OpenAI ChatCompletion request format to Anthropic Messages API format.
 """
 
 import copy
-import json
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ..constants import (
@@ -166,10 +165,12 @@ def _convert_assistant_content(msg: Dict[str, Any]) -> List[Dict[str, Any]]:
                     block["signature"] = sig
                 blocks.append(block)
             elif tb_type == "redacted_thinking":
-                blocks.append({
-                    "type": "redacted_thinking",
-                    "data": tb.get("data", ""),
-                })
+                blocks.append(
+                    {
+                        "type": "redacted_thinking",
+                        "data": tb.get("data", ""),
+                    }
+                )
 
     # Add text content
     if isinstance(content, str) and content:
@@ -194,12 +195,14 @@ def _convert_assistant_content(msg: Dict[str, Any]) -> List[Dict[str, Any]]:
             # Try wrapping as a dict if parse fails
             parsed_args = {"raw": parsed_args}
 
-        blocks.append({
-            "type": "tool_use",
-            "id": tc.get("id", ""),
-            "name": func.get("name", ""),
-            "input": parsed_args,
-        })
+        blocks.append(
+            {
+                "type": "tool_use",
+                "id": tc.get("id", ""),
+                "name": func.get("name", ""),
+                "input": parsed_args,
+            }
+        )
 
     return blocks
 
@@ -316,10 +319,13 @@ def convert_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         tool_type = tool.get("type", "function")
         if tool_type == "function":
             func = tool.get("function", {})
-            input_schema = func.get("parameters", {
-                "type": "object",
-                "properties": {},
-            })
+            input_schema = func.get(
+                "parameters",
+                {
+                    "type": "object",
+                    "properties": {},
+                },
+            )
             # Ensure input_schema.type is "object" (Anthropic requirement)
             if input_schema.get("type") != "object":
                 input_schema = dict(input_schema)
@@ -422,9 +428,7 @@ def convert_response_format(
         return result
 
     # Check if model supports native output_format
-    supports_output_format = any(
-        sub in model for sub in OUTPUT_FORMAT_SUPPORTED_MODEL_SUBSTRINGS
-    )
+    supports_output_format = any(sub in model for sub in OUTPUT_FORMAT_SUPPORTED_MODEL_SUBSTRINGS)
 
     if supports_output_format:
         # Resolve $ref/$defs and filter schema
@@ -438,7 +442,9 @@ def convert_response_format(
         # Use tool-based JSON mode
         tool = {
             "name": RESPONSE_FORMAT_TOOL_NAME,
-            "input_schema": json_schema if json_schema else {
+            "input_schema": json_schema
+            if json_schema
+            else {
                 "type": "object",
                 "properties": {},
                 "additionalProperties": True,

@@ -4,12 +4,11 @@ OpenAI -> Anthropic response conversion.
 Converts OpenAI ChatCompletion responses to Anthropic Messages API format.
 """
 
-import json
 import uuid
 from typing import Any, Dict, List, Optional
 
 from ..constants import OPENAI_TO_ANTHROPIC_STOP_REASON
-from ..utils import safe_json_loads, truncate_tool_name
+from ..utils import safe_json_loads
 
 
 def convert_openai_content_to_anthropic(
@@ -36,23 +35,31 @@ def convert_openai_content_to_anthropic(
             for tb in thinking_blocks:
                 tb_type = tb.get("type", "thinking")
                 if tb_type == "thinking":
-                    content.append({
-                        "type": "thinking",
-                        "thinking": str(tb.get("thinking", "")),
-                        "signature": str(tb.get("signature", "")) if tb.get("signature") else None,
-                    })
+                    content.append(
+                        {
+                            "type": "thinking",
+                            "thinking": str(tb.get("thinking", "")),
+                            "signature": str(tb.get("signature", ""))
+                            if tb.get("signature")
+                            else None,
+                        }
+                    )
                 elif tb_type == "redacted_thinking":
-                    content.append({
-                        "type": "redacted_thinking",
-                        "data": str(tb.get("data", "")),
-                    })
+                    content.append(
+                        {
+                            "type": "redacted_thinking",
+                            "data": str(tb.get("data", "")),
+                        }
+                    )
         elif message.get("reasoning_content"):
             # Fallback: use reasoning_content as a thinking block
-            content.append({
-                "type": "thinking",
-                "thinking": str(message["reasoning_content"]),
-                "signature": None,
-            })
+            content.append(
+                {
+                    "type": "thinking",
+                    "thinking": str(message["reasoning_content"]),
+                    "signature": None,
+                }
+            )
 
         # Handle text content
         text = message.get("content")
@@ -78,12 +85,14 @@ def convert_openai_content_to_anthropic(
             if isinstance(parsed_input, str):
                 parsed_input = {}
 
-            content.append({
-                "type": "tool_use",
-                "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:12]}"),
-                "name": original_name,
-                "input": parsed_input,
-            })
+            content.append(
+                {
+                    "type": "tool_use",
+                    "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:12]}"),
+                    "name": original_name,
+                    "input": parsed_input,
+                }
+            )
 
     return content
 
@@ -144,9 +153,7 @@ def convert_response(
     choices = openai_response.get("choices", [])
 
     # Convert content
-    anthropic_content = convert_openai_content_to_anthropic(
-        choices, tool_name_mapping
-    )
+    anthropic_content = convert_openai_content_to_anthropic(choices, tool_name_mapping)
 
     # Map finish reason
     finish_reason = choices[0].get("finish_reason", "stop") if choices else "stop"
@@ -154,10 +161,14 @@ def convert_response(
 
     # Convert usage
     openai_usage = openai_response.get("usage", {})
-    anthropic_usage = convert_usage(openai_usage) if openai_usage else {
-        "input_tokens": 0,
-        "output_tokens": 0,
-    }
+    anthropic_usage = (
+        convert_usage(openai_usage)
+        if openai_usage
+        else {
+            "input_tokens": 0,
+            "output_tokens": 0,
+        }
+    )
 
     response: Dict[str, Any] = {
         "id": openai_response.get("id", f"msg_{uuid.uuid4().hex[:12]}"),

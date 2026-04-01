@@ -5,7 +5,7 @@ Converts Anthropic Messages API requests to OpenAI ChatCompletion format.
 """
 
 import json
-from typing import Any, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..constants import BUDGET_TOKENS_THRESHOLDS
 from ..utils import translate_anthropic_image_to_openai, truncate_tool_name
@@ -142,10 +142,12 @@ def _convert_tool_result(block: Dict[str, Any]) -> Dict[str, Any]:
                         source = item.get("source", {})
                         url = translate_anthropic_image_to_openai(source) or ""
                         if url:
-                            parts.append({
-                                "type": "image_url",
-                                "image_url": {"url": url},
-                            })
+                            parts.append(
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": url},
+                                }
+                            )
             if parts:
                 return {"role": "tool", "tool_call_id": tool_call_id, "content": parts}
 
@@ -197,17 +199,21 @@ def _convert_assistant_message(
                     tool_calls.append(tc)
 
                 elif block_type == "thinking":
-                    thinking_blocks.append({
-                        "type": "thinking",
-                        "thinking": block.get("thinking", ""),
-                        "signature": block.get("signature", ""),
-                    })
+                    thinking_blocks.append(
+                        {
+                            "type": "thinking",
+                            "thinking": block.get("thinking", ""),
+                            "signature": block.get("signature", ""),
+                        }
+                    )
 
                 elif block_type == "redacted_thinking":
-                    thinking_blocks.append({
-                        "type": "redacted_thinking",
-                        "data": block.get("data", ""),
-                    })
+                    thinking_blocks.append(
+                        {
+                            "type": "redacted_thinking",
+                            "data": block.get("data", ""),
+                        }
+                    )
 
     if not text_parts and not tool_calls and not thinking_blocks:
         return
@@ -418,8 +424,14 @@ def convert_request(
     tools = request.pop("tools", None)
     if tools:
         # Separate web search tools
-        web_search_tools = [t for t in tools if isinstance(t, dict) and t.get("type", "").startswith("web_search")]
-        regular_tools = [t for t in tools if not (isinstance(t, dict) and t.get("type", "").startswith("web_search"))]
+        web_search_tools = [
+            t for t in tools if isinstance(t, dict) and t.get("type", "").startswith("web_search")
+        ]
+        regular_tools = [
+            t
+            for t in tools
+            if not (isinstance(t, dict) and t.get("type", "").startswith("web_search"))
+        ]
 
         if web_search_tools:
             result["web_search_options"] = {}
