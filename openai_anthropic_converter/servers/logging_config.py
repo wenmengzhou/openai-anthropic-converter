@@ -65,6 +65,4 @@ def setup_logging(
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
 
-    logging.getLogger(server_name).info(
-        "Logging initialized: level=%s, file=%s", level, log_file
-    )
+    logging.getLogger(server_name).info("Logging initialized: level=%s, file=%s", level, log_file)
