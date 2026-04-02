@@ -1994,7 +1994,6 @@ class TestRound4EdgeCases:
         # it maps to tool_choice="auto" (the disable part is lost in conversion)
         assert result["tool_choice"] == "auto"
 
-
     def test_response_redacted_thinking_preserved(self):
         """Redacted thinking blocks should be preserved in Anthropic response."""
         openai_resp = {
@@ -2081,9 +2080,7 @@ class TestRound4EdgeCases:
             ],
             "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         }
-        result = AnthropicToOpenAIConverter.convert_response(
-            openai_resp, tool_name_mapping=mapping
-        )
+        result = AnthropicToOpenAIConverter.convert_response(openai_resp, tool_name_mapping=mapping)
         tool_block = [b for b in result["content"] if b["type"] == "tool_use"][0]
         assert tool_block["name"] == long_name
 
@@ -2123,12 +2120,8 @@ class TestRound4EdgeCases:
                     ]
                 }
             ),
-            _make_chunk(
-                {"tool_calls": [{"index": 0, "function": {"arguments": '{"q":'}}]}
-            ),
-            _make_chunk(
-                {"tool_calls": [{"index": 0, "function": {"arguments": '"hi"}'}}]}
-            ),
+            _make_chunk({"tool_calls": [{"index": 0, "function": {"arguments": '{"q":'}}]}),
+            _make_chunk({"tool_calls": [{"index": 0, "function": {"arguments": '"hi"}'}}]}),
             _make_chunk(
                 {
                     "tool_calls": [
@@ -2141,16 +2134,19 @@ class TestRound4EdgeCases:
                     ]
                 }
             ),
-            _make_chunk(
-                {"tool_calls": [{"index": 1, "function": {"arguments": '{"url":"x"}'}}]}
-            ),
+            _make_chunk({"tool_calls": [{"index": 1, "function": {"arguments": '{"url":"x"}'}}]}),
             _make_chunk({}, finish_reason="tool_calls"),
         ]
         events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
         event_types = [e["type"] for e in events]
 
         # Should have two tool_use blocks
-        tool_starts = [e for e in events if e["type"] == "content_block_start" and e.get("content_block", {}).get("type") == "tool_use"]
+        tool_starts = [
+            e
+            for e in events
+            if e["type"] == "content_block_start"
+            and e.get("content_block", {}).get("type") == "tool_use"
+        ]
         assert len(tool_starts) == 2
         assert tool_starts[0]["content_block"]["name"] == "search"
         assert tool_starts[1]["content_block"]["name"] == "fetch"
@@ -2179,12 +2175,25 @@ class TestRound4EdgeCases:
             _make_chunk({}, finish_reason="tool_calls"),
         ]
         events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
-        event_types = [e["type"] for e in events]
 
         # Text block should be opened and closed before tool block
-        text_start_idx = next(i for i, e in enumerate(events) if e["type"] == "content_block_start" and e.get("content_block", {}).get("type") == "text")
-        text_stop_idx = next(i for i, e in enumerate(events) if i > text_start_idx and e["type"] == "content_block_stop")
-        tool_start_idx = next(i for i, e in enumerate(events) if e["type"] == "content_block_start" and e.get("content_block", {}).get("type") == "tool_use")
+        text_start_idx = next(
+            i
+            for i, e in enumerate(events)
+            if e["type"] == "content_block_start"
+            and e.get("content_block", {}).get("type") == "text"
+        )
+        text_stop_idx = next(
+            i
+            for i, e in enumerate(events)
+            if i > text_start_idx and e["type"] == "content_block_stop"
+        )
+        tool_start_idx = next(
+            i
+            for i, e in enumerate(events)
+            if e["type"] == "content_block_start"
+            and e.get("content_block", {}).get("type") == "tool_use"
+        )
         assert text_stop_idx < tool_start_idx
 
     def test_stream_usage_only_chunk(self):
@@ -2246,9 +2255,7 @@ class TestRound6EdgeCases:
             _make_chunk({}, finish_reason="stop"),
         ]
 
-        sync_events = list(
-            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
-        )
+        sync_events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
 
         async def run_async():
             async def async_chunks():
@@ -2278,9 +2285,7 @@ class TestRound6EdgeCases:
                     "message": {
                         "role": "assistant",
                         "content": "42",
-                        "thinking_blocks": [
-                            {"type": "thinking", "thinking": "Let me think..."}
-                        ],
+                        "thinking_blocks": [{"type": "thinking", "thinking": "Let me think..."}],
                     },
                     "finish_reason": "stop",
                 }
@@ -2427,20 +2432,11 @@ class TestRound6EdgeCases:
         """Stream with thinking then text should properly close thinking block."""
         chunks = [
             _make_chunk({"role": "assistant"}),
-            _make_chunk(
-                {
-                    "thinking_blocks": [
-                        {"type": "thinking", "thinking": "Hmm..."}
-                    ]
-                }
-            ),
+            _make_chunk({"thinking_blocks": [{"type": "thinking", "thinking": "Hmm..."}]}),
             _make_chunk({"content": "The answer is 42."}),
             _make_chunk({}, finish_reason="stop"),
         ]
-        events = list(
-            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
-        )
-        event_types = [e["type"] for e in events]
+        events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
 
         # Should have: message_start, content_block_start(thinking),
         # content_block_delta(thinking), content_block_stop,
@@ -2493,9 +2489,7 @@ class TestRound6EdgeCases:
                     ]
                 }
             ),
-            _make_chunk(
-                {"tool_calls": [{"index": 0, "function": {"arguments": '{"x":1}'}}]}
-            ),
+            _make_chunk({"tool_calls": [{"index": 0, "function": {"arguments": '{"x":1}'}}]}),
             _make_chunk({}, finish_reason="tool_calls"),
         ]
         events = list(
@@ -2751,9 +2745,7 @@ class TestRound10to12:
             ),
             _make_chunk({}, finish_reason="tool_calls"),
         ]
-        events = list(
-            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
-        )
+        events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
         # Get all content_block_start events
         block_starts = [e for e in events if e["type"] == "content_block_start"]
         # Should have text block (index 0) and tool block (index 1)
@@ -2858,23 +2850,21 @@ class TestRound13to14:
             _make_chunk({"content": "The answer is 42."}),
             _make_chunk({}, finish_reason="stop"),
         ]
-        events = list(
-            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
-        )
+        events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
         # Should have thinking block events
         thinking_deltas = [
-            e for e in events
-            if e["type"] == "content_block_delta"
-            and e["delta"]["type"] == "thinking_delta"
+            e
+            for e in events
+            if e["type"] == "content_block_delta" and e["delta"]["type"] == "thinking_delta"
         ]
         assert len(thinking_deltas) == 1
         assert thinking_deltas[0]["delta"]["thinking"] == "Let me think about this..."
 
         # Should also have text delta
         text_deltas = [
-            e for e in events
-            if e["type"] == "content_block_delta"
-            and e["delta"]["type"] == "text_delta"
+            e
+            for e in events
+            if e["type"] == "content_block_delta" and e["delta"]["type"] == "text_delta"
         ]
         assert len(text_deltas) == 1
         assert text_deltas[0]["delta"]["text"] == "The answer is 42."
@@ -2887,13 +2877,11 @@ class TestRound13to14:
             _make_chunk({"content": "Hello"}),
             _make_chunk({}, finish_reason="stop"),
         ]
-        events = list(
-            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
-        )
+        events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
         thinking_deltas = [
-            e for e in events
-            if e["type"] == "content_block_delta"
-            and e["delta"].get("type") == "thinking_delta"
+            e
+            for e in events
+            if e["type"] == "content_block_delta" and e["delta"].get("type") == "thinking_delta"
         ]
         assert len(thinking_deltas) == 0
 
@@ -2902,25 +2890,31 @@ class TestRound13to14:
         chunks = [
             _make_chunk({"role": "assistant", "content": ""}),
             _make_chunk({"reasoning_content": "I should search for this."}),
-            _make_chunk({
-                "tool_calls": [{
-                    "index": 0,
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {"name": "search", "arguments": ""},
-                }]
-            }),
-            _make_chunk({
-                "tool_calls": [{
-                    "index": 0,
-                    "function": {"arguments": '{"q":"test"}'},
-                }]
-            }),
+            _make_chunk(
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "search", "arguments": ""},
+                        }
+                    ]
+                }
+            ),
+            _make_chunk(
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "function": {"arguments": '{"q":"test"}'},
+                        }
+                    ]
+                }
+            ),
             _make_chunk({}, finish_reason="tool_calls"),
         ]
-        events = list(
-            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
-        )
+        events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
         # Should have thinking block start/delta/stop and tool_use block start/delta/stop
         block_starts = [e for e in events if e["type"] == "content_block_start"]
         assert len(block_starts) == 2
@@ -2931,20 +2925,20 @@ class TestRound13to14:
         """thinking_blocks should take precedence over reasoning_content in same delta."""
         chunks = [
             _make_chunk({"role": "assistant", "content": ""}),
-            _make_chunk({
-                "reasoning_content": "should be ignored",
-                "thinking_blocks": [{"type": "thinking", "thinking": "real thinking"}],
-            }),
+            _make_chunk(
+                {
+                    "reasoning_content": "should be ignored",
+                    "thinking_blocks": [{"type": "thinking", "thinking": "real thinking"}],
+                }
+            ),
             _make_chunk({"content": "done"}),
             _make_chunk({}, finish_reason="stop"),
         ]
-        events = list(
-            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
-        )
+        events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
         thinking_deltas = [
-            e for e in events
-            if e["type"] == "content_block_delta"
-            and e["delta"].get("type") == "thinking_delta"
+            e
+            for e in events
+            if e["type"] == "content_block_delta" and e["delta"].get("type") == "thinking_delta"
         ]
         assert len(thinking_deltas) == 1
         assert thinking_deltas[0]["delta"]["thinking"] == "real thinking"
