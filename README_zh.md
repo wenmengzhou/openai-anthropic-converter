@@ -28,7 +28,7 @@ anthropic_req = OpenAIToAnthropicConverter.convert_request(openai_request)
 # ... 发送到 Anthropic API ...
 openai_resp = OpenAIToAnthropicConverter.convert_response(anthropic_response)
 
-# 流式
+# 异步流式
 async for chunk in OpenAIToAnthropicConverter.aconvert_stream(anthropic_sse_events):
     print(chunk)  # OpenAI chat.completion.chunk 格式
 ```
@@ -36,6 +36,7 @@ async for chunk in OpenAIToAnthropicConverter.aconvert_stream(anthropic_sse_even
 **Anthropic 格式 → OpenAI 格式（调用 OpenAI 后端）**
 
 ```python
+import json
 from openai_anthropic_converter import AnthropicToOpenAIConverter
 
 # 转换请求（返回 tuple，包含工具名映射）
@@ -45,7 +46,7 @@ anthropic_resp = AnthropicToOpenAIConverter.convert_response(
     openai_response, tool_name_mapping=tool_name_mapping
 )
 
-# 流式
+# 异步流式
 async for event in AnthropicToOpenAIConverter.aconvert_stream(
     openai_chunks, tool_name_mapping=tool_name_mapping
 ):
@@ -138,7 +139,7 @@ pip install -e ".[dev]"       # 含开发工具（pytest, ruff, mypy）
 
 python -m pytest tests/ -v    # 运行测试
 ruff check . && ruff format --check .    # 代码检查
-mypy --ignore-missing-imports --no-strict-optional openai_anthropic_converter/
+mypy --ignore-missing-imports openai_anthropic_converter/
 ```
 
 ## 项目结构

@@ -36,6 +36,7 @@ async for chunk in OpenAIToAnthropicConverter.aconvert_stream(anthropic_sse_even
 **Anthropic format → OpenAI format (calling an OpenAI backend)**
 
 ```python
+import json
 from openai_anthropic_converter import AnthropicToOpenAIConverter
 
 # Convert request (returns a tuple with tool name mapping)
@@ -45,7 +46,7 @@ anthropic_resp = AnthropicToOpenAIConverter.convert_response(
     openai_response, tool_name_mapping=tool_name_mapping
 )
 
-# Streaming
+# Async streaming
 async for event in AnthropicToOpenAIConverter.aconvert_stream(
     openai_chunks, tool_name_mapping=tool_name_mapping
 ):
@@ -138,7 +139,7 @@ pip install -e ".[dev]"       # With dev tools (pytest, ruff, mypy)
 
 python -m pytest tests/ -v    # Run tests
 ruff check . && ruff format --check .    # Lint
-mypy --ignore-missing-imports --no-strict-optional openai_anthropic_converter/
+mypy --ignore-missing-imports openai_anthropic_converter/
 ```
 
 ## Project Structure
