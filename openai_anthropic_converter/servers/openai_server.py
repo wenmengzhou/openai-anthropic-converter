@@ -39,7 +39,7 @@ except ImportError:
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from openai_anthropic_converter import OpenAIToAnthropicConverter
 
@@ -100,12 +100,18 @@ _config: Dict[str, Any] = {
     "anthropic_version": "2023-06-01",
     "timeout": 300,
     "default_max_tokens": 4096,
+    "models": ["claude-sonnet-4-20250514", "claude-opus-4-20250514"],
 }
 
 
 def configure(**kwargs: Any) -> None:
     """Update server configuration. Call before starting the server."""
     _config.update(kwargs)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
 
 
 # ── Health check ────────────────────────────────────────────────────────
@@ -119,12 +125,12 @@ async def health():
 
 @app.get("/v1/models", response_model=OpenAIModelsResponse, tags=["Models"])
 async def list_models():
-    """List available models. Returns a static list of Anthropic models."""
+    """List available models. Returns the configured model list."""
     return {
         "object": "list",
         "data": [
-            {"id": "claude-sonnet-4-20250514", "object": "model", "owned_by": "anthropic"},
-            {"id": "claude-opus-4-20250514", "object": "model", "owned_by": "anthropic"},
+            {"id": m, "object": "model", "owned_by": "system"}
+            for m in _config["models"]
         ],
     }
 
@@ -137,7 +143,7 @@ async def debug_playground():
     """Interactive debug playground for testing API requests."""
     from .debug_page import get_debug_html
 
-    return HTMLResponse(get_debug_html("openai"))
+    return HTMLResponse(get_debug_html("openai", models=_config["models"]))
 
 
 # ── Chat Completions ───────────────────────────────────────────────────
@@ -449,10 +455,16 @@ def main():
         default=os.environ.get("ANTHROPIC_API_KEY", ""),
         help="Anthropic API key (default: $ANTHROPIC_API_KEY)",
     )
-    parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8001, help="Bind port (default: 8001)")
     parser.add_argument("--timeout", type=int, default=300, help="Backend timeout in seconds")
     parser.add_argument("--default-max-tokens", type=int, default=4096)
+    parser.add_argument(
+        "--models",
+        default=os.environ.get("OPENAI_SERVER_MODELS", os.environ.get("MODELS", "")),
+        help="Comma-separated list of available model names for /v1/models and debug page. "
+        "(default: $OPENAI_SERVER_MODELS or $MODELS or claude-sonnet-4-20250514,claude-opus-4-20250514)",
+    )
     parser.add_argument(
         "--log-level", default="info", choices=["debug", "info", "warning", "error"]
     )
@@ -467,11 +479,16 @@ def main():
 
     backend_url = _normalize_anthropic_url(args.backend_url)
 
+    models = [m.strip() for m in args.models.split(",") if m.strip()] if args.models else [
+        "claude-sonnet-4-20250514", "claude-opus-4-20250514"
+    ]
+
     configure(
         backend_url=backend_url,
         backend_api_key=args.backend_api_key,
         timeout=args.timeout,
         default_max_tokens=args.default_max_tokens,
+        models=models,
     )
 
     logger.info("Starting OpenAI-compatible server on %s:%d", args.host, args.port)

@@ -10,14 +10,14 @@ Serves a self-contained HTML page at /debug with:
 
 OPENAI_EXAMPLES = {
     "Basic Chat": {
-        "model": "claude-sonnet-4-20250514",
+        "model": "__MODEL__",
         "messages": [
             {"role": "user", "content": "Hello! What's 2+2?"}
         ],
         "max_tokens": 256,
     },
     "System + Multi-turn": {
-        "model": "claude-sonnet-4-20250514",
+        "model": "__MODEL__",
         "messages": [
             {"role": "system", "content": "You are a helpful math tutor. Be concise."},
             {"role": "user", "content": "What is the derivative of x^2?"},
@@ -27,7 +27,7 @@ OPENAI_EXAMPLES = {
         "max_tokens": 256,
     },
     "Tool Use": {
-        "model": "claude-sonnet-4-20250514",
+        "model": "__MODEL__",
         "messages": [
             {"role": "user", "content": "What's the weather in Tokyo?"}
         ],
@@ -55,7 +55,7 @@ OPENAI_EXAMPLES = {
         ],
     },
     "JSON Schema Output": {
-        "model": "claude-sonnet-4-20250514",
+        "model": "__MODEL__",
         "messages": [
             {"role": "user", "content": "List 3 programming languages with their year of creation"}
         ],
@@ -85,7 +85,7 @@ OPENAI_EXAMPLES = {
         },
     },
     "Streaming": {
-        "model": "claude-sonnet-4-20250514",
+        "model": "__MODEL__",
         "messages": [
             {"role": "user", "content": "Write a haiku about programming."}
         ],
@@ -93,7 +93,7 @@ OPENAI_EXAMPLES = {
         "stream": True,
     },
     "Extended Thinking": {
-        "model": "claude-sonnet-4-20250514",
+        "model": "__MODEL__",
         "messages": [
             {"role": "user", "content": "What is 127 * 389? Think step by step."}
         ],
@@ -101,7 +101,7 @@ OPENAI_EXAMPLES = {
         "reasoning_effort": "high",
     },
     "[Bailian] Thinking + Search": {
-        "model": "claude-sonnet-4-20250514",
+        "model": "__MODEL__",
         "messages": [
             {"role": "user", "content": "What happened in tech news today?"}
         ],
@@ -121,14 +121,14 @@ OPENAI_EXAMPLES = {
 
 ANTHROPIC_EXAMPLES = {
     "Basic Message": {
-        "model": "gpt-4o",
+        "model": "__MODEL__",
         "messages": [
             {"role": "user", "content": "Hello! What's 2+2?"}
         ],
         "max_tokens": 256,
     },
     "System Prompt": {
-        "model": "gpt-4o",
+        "model": "__MODEL__",
         "system": "You are a helpful math tutor. Be concise.",
         "messages": [
             {"role": "user", "content": "What is the derivative of x^2?"}
@@ -136,7 +136,7 @@ ANTHROPIC_EXAMPLES = {
         "max_tokens": 256,
     },
     "Multi-modal (Image URL)": {
-        "model": "gpt-4o",
+        "model": "__MODEL__",
         "messages": [
             {
                 "role": "user",
@@ -155,7 +155,7 @@ ANTHROPIC_EXAMPLES = {
         "max_tokens": 1024,
     },
     "Tool Use": {
-        "model": "gpt-4o",
+        "model": "__MODEL__",
         "messages": [
             {"role": "user", "content": "What's the weather in Tokyo?"}
         ],
@@ -175,7 +175,7 @@ ANTHROPIC_EXAMPLES = {
         ],
     },
     "Extended Thinking": {
-        "model": "gpt-4o",
+        "model": "__MODEL__",
         "messages": [
             {"role": "user", "content": "What is 127 * 389? Think step by step."}
         ],
@@ -183,7 +183,7 @@ ANTHROPIC_EXAMPLES = {
         "thinking": {"type": "enabled", "budget_tokens": 10000},
     },
     "Streaming": {
-        "model": "gpt-4o",
+        "model": "__MODEL__",
         "messages": [
             {"role": "user", "content": "Write a haiku about programming."}
         ],
@@ -191,7 +191,7 @@ ANTHROPIC_EXAMPLES = {
         "stream": True,
     },
     "Count Tokens": {
-        "model": "gpt-4o",
+        "model": "__MODEL__",
         "messages": [
             {"role": "user", "content": "Hello, how are you?"}
         ],
@@ -199,14 +199,18 @@ ANTHROPIC_EXAMPLES = {
 }
 
 
-def get_debug_html(server_type: str) -> str:
+def get_debug_html(server_type: str, models: list[str] | None = None) -> str:
     """
     Generate the debug playground HTML page.
 
     Args:
         server_type: "openai" or "anthropic"
+        models: list of available model names for the model selector
     """
     import json
+
+    if not models:
+        models = ["claude-sonnet-4-20250514"] if server_type == "openai" else ["gpt-4o"]
 
     if server_type == "openai":
         title = "OpenAI-Compatible Server Debug Playground"
@@ -228,6 +232,7 @@ def get_debug_html(server_type: str) -> str:
         default_endpoint = "/v1/messages"
 
     examples_js = json.dumps(examples, indent=2)
+    models_js = json.dumps(models)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -297,6 +302,19 @@ def get_debug_html(server_type: str) -> str:
   .json-bool {{ color: #ff7b72; }}
   .json-null {{ color: var(--muted); }}
   .stream-chunk {{ border-bottom: 1px dashed var(--border); padding-bottom: 4px; margin-bottom: 4px; }}
+  .stream-text {{ white-space: pre-wrap; line-height: 1.6; font-size: 0.875rem; }}
+  .stream-text .thinking-block {{
+    background: #1c2333; border-left: 3px solid var(--orange); padding: 8px 12px;
+    margin: 8px 0; border-radius: 0 6px 6px 0; color: var(--muted); font-size: 0.8125rem;
+  }}
+  .stream-text .thinking-label {{ color: var(--orange); font-weight: 600; font-size: 0.75rem; margin-bottom: 4px; }}
+  .stream-text .tool-block {{
+    background: #1c2333; border-left: 3px solid var(--accent); padding: 8px 12px;
+    margin: 8px 0; border-radius: 0 6px 6px 0; font-size: 0.8125rem;
+  }}
+  .stream-text .tool-label {{ color: var(--accent); font-weight: 600; font-size: 0.75rem; margin-bottom: 4px; }}
+  .stream-cursor {{ display: inline-block; width: 2px; height: 1em; background: var(--accent); animation: blink 0.8s infinite; vertical-align: text-bottom; margin-left: 1px; }}
+  @keyframes blink {{ 0%,50% {{ opacity: 1; }} 51%,100% {{ opacity: 0; }} }}
 </style>
 </head>
 <body>
@@ -312,6 +330,8 @@ def get_debug_html(server_type: str) -> str:
     <div class="panel">
       <div class="panel-header">
         <h2>Request</h2>
+        <select id="modelSel" title="Select model">
+        </select>
         <select id="endpoint">
         </select>
         <select id="examples" title="Load example">
@@ -329,6 +349,9 @@ def get_debug_html(server_type: str) -> str:
         <button onclick="copyResponse()">Copy</button>
         <button onclick="clearResponse()">Clear</button>
         <label style="font-size:0.8125rem; color:var(--muted); margin-left:auto;">
+          <input type="checkbox" id="streamText" checked> Text
+        </label>
+        <label style="font-size:0.8125rem; color:var(--muted);">
           <input type="checkbox" id="prettyPrint" checked onchange="reformatResponse()"> Pretty
         </label>
       </div>
@@ -345,11 +368,43 @@ def get_debug_html(server_type: str) -> str:
 <script>
 const ENDPOINTS = {endpoints_js};
 const EXAMPLES = {examples_js};
+const MODELS = {models_js};
 let abortController = null;
 let rawResponse = '';
 
+function getSelectedModel() {{
+  return document.getElementById('modelSel').value;
+}}
+
+function applyModel(jsonStr) {{
+  return jsonStr.replace(/"__MODEL__"/g, JSON.stringify(getSelectedModel()));
+}}
+
+function loadExample(name) {{
+  if (!name || !EXAMPLES[name]) return;
+  const json = JSON.stringify(EXAMPLES[name], null, 2);
+  document.getElementById('requestBody').value = applyModel(json);
+}}
+
 // Initialize
 (function init() {{
+  // Populate model selector
+  const modelSel = document.getElementById('modelSel');
+  MODELS.forEach(m => {{
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m;
+    modelSel.appendChild(opt);
+  }});
+  modelSel.addEventListener('change', () => {{
+    // Replace model in current request body
+    try {{
+      const body = JSON.parse(document.getElementById('requestBody').value);
+      body.model = getSelectedModel();
+      document.getElementById('requestBody').value = JSON.stringify(body, null, 2);
+    }} catch {{}}
+  }});
+
   const epSel = document.getElementById('endpoint');
   ENDPOINTS.forEach(ep => {{
     const opt = document.createElement('option');
@@ -365,14 +420,12 @@ let rawResponse = '';
     exSel.appendChild(opt);
   }});
   exSel.addEventListener('change', () => {{
-    if (exSel.value && EXAMPLES[exSel.value]) {{
-      document.getElementById('requestBody').value = JSON.stringify(EXAMPLES[exSel.value], null, 2);
-    }}
+    loadExample(exSel.value);
   }});
   // Load first example
   const firstKey = Object.keys(EXAMPLES)[0];
   if (firstKey) {{
-    document.getElementById('requestBody').value = JSON.stringify(EXAMPLES[firstKey], null, 2);
+    loadExample(firstKey);
     exSel.value = firstKey;
   }}
 }})();
@@ -412,11 +465,25 @@ async function sendRequest() {{
 
     if (ct.includes('text/event-stream')) {{
       // Streaming
+      const textMode = document.getElementById('streamText').checked;
       statusEl.textContent = resp.status + ' Streaming...';
       statusEl.className = 'status pending';
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+
+      // Text mode state
+      let textEl = null;
+      let thinkEl = null;
+      let toolEls = {{}};
+      let cursorEl = null;
+      if (textMode) {{
+        area.innerHTML = '<div class="stream-text" id="streamTextArea"></div>';
+        textEl = document.getElementById('streamTextArea');
+        cursorEl = document.createElement('span');
+        cursorEl.className = 'stream-cursor';
+        textEl.appendChild(cursorEl);
+      }}
 
       while (true) {{
         const {{ done, value }} = await reader.read();
@@ -428,19 +495,144 @@ async function sendRequest() {{
           const trimmed = line.trim();
           if (!trimmed) continue;
           if (trimmed === 'data: [DONE]') {{
-            area.innerHTML += '<div class="stream-chunk" style="color:var(--green)">— stream done —</div>';
+            if (textMode) {{
+              if (cursorEl && cursorEl.parentNode) cursorEl.remove();
+            }} else {{
+              area.innerHTML += '<div class="stream-chunk" style="color:var(--green)">— stream done —</div>';
+            }}
             continue;
           }}
           if (trimmed.startsWith('data: ')) {{
             const json = trimmed.slice(6);
             rawResponse += json + '\\n';
-            area.innerHTML += '<div class="stream-chunk">' + syntaxHighlight(json) + '</div>';
+
+            if (textMode) {{
+              try {{
+                const chunk = JSON.parse(json);
+                // OpenAI format: choices[0].delta
+                const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta;
+                if (delta) {{
+                  // Text content
+                  if (delta.content) {{
+                    if (cursorEl && cursorEl.parentNode) cursorEl.remove();
+                    textEl.insertBefore(document.createTextNode(delta.content), null);
+                    textEl.appendChild(cursorEl);
+                  }}
+                  // Thinking blocks
+                  if (delta.thinking_blocks) {{
+                    delta.thinking_blocks.forEach(tb => {{
+                      if (tb.thinking) {{
+                        if (!thinkEl) {{
+                          if (cursorEl && cursorEl.parentNode) cursorEl.remove();
+                          thinkEl = document.createElement('div');
+                          thinkEl.className = 'thinking-block';
+                          thinkEl.innerHTML = '<div class="thinking-label">Thinking</div>';
+                          thinkEl.appendChild(document.createElement('span'));
+                          textEl.appendChild(thinkEl);
+                          textEl.appendChild(cursorEl);
+                        }}
+                        thinkEl.querySelector('span').textContent += tb.thinking;
+                      }}
+                    }});
+                  }}
+                  // Reasoning content (Bailian)
+                  if (delta.reasoning_content) {{
+                    if (!thinkEl) {{
+                      if (cursorEl && cursorEl.parentNode) cursorEl.remove();
+                      thinkEl = document.createElement('div');
+                      thinkEl.className = 'thinking-block';
+                      thinkEl.innerHTML = '<div class="thinking-label">Thinking</div>';
+                      thinkEl.appendChild(document.createElement('span'));
+                      textEl.appendChild(thinkEl);
+                      textEl.appendChild(cursorEl);
+                    }}
+                    thinkEl.querySelector('span').textContent += delta.reasoning_content;
+                  }}
+                  // Tool calls
+                  if (delta.tool_calls) {{
+                    delta.tool_calls.forEach(tc => {{
+                      const idx = tc.index || 0;
+                      if (!toolEls[idx]) {{
+                        // Close thinking block
+                        if (thinkEl) {{ thinkEl = null; }}
+                        if (cursorEl && cursorEl.parentNode) cursorEl.remove();
+                        const el = document.createElement('div');
+                        el.className = 'tool-block';
+                        const name = (tc.function && tc.function.name) || 'tool_call';
+                        el.innerHTML = '<div class="tool-label">Tool: ' + name + '</div>';
+                        el.appendChild(document.createElement('span'));
+                        textEl.appendChild(el);
+                        textEl.appendChild(cursorEl);
+                        toolEls[idx] = el;
+                      }}
+                      if (tc.function && tc.function.arguments) {{
+                        toolEls[idx].querySelector('span').textContent += tc.function.arguments;
+                      }}
+                    }});
+                  }}
+                  // Finish: close thinking
+                  if (chunk.choices[0].finish_reason) {{
+                    thinkEl = null;
+                    toolEls = {{}};
+                  }}
+                }}
+                // Anthropic format: type-based events
+                if (chunk.type === 'content_block_delta' && chunk.delta) {{
+                  if (cursorEl && cursorEl.parentNode) cursorEl.remove();
+                  if (chunk.delta.type === 'text_delta' && chunk.delta.text) {{
+                    textEl.insertBefore(document.createTextNode(chunk.delta.text), null);
+                  }} else if (chunk.delta.type === 'thinking_delta' && chunk.delta.thinking) {{
+                    if (!thinkEl) {{
+                      thinkEl = document.createElement('div');
+                      thinkEl.className = 'thinking-block';
+                      thinkEl.innerHTML = '<div class="thinking-label">Thinking</div>';
+                      thinkEl.appendChild(document.createElement('span'));
+                      textEl.appendChild(thinkEl);
+                    }}
+                    thinkEl.querySelector('span').textContent += chunk.delta.thinking;
+                  }} else if (chunk.delta.type === 'input_json_delta' && chunk.delta.partial_json) {{
+                    const lastTool = textEl.querySelector('.tool-block:last-of-type span');
+                    if (lastTool) lastTool.textContent += chunk.delta.partial_json;
+                  }}
+                  textEl.appendChild(cursorEl);
+                }}
+                if (chunk.type === 'content_block_start' && chunk.content_block) {{
+                  if (chunk.content_block.type === 'tool_use') {{
+                    if (cursorEl && cursorEl.parentNode) cursorEl.remove();
+                    thinkEl = null;
+                    const el = document.createElement('div');
+                    el.className = 'tool-block';
+                    el.innerHTML = '<div class="tool-label">Tool: ' + (chunk.content_block.name || 'tool_call') + '</div>';
+                    el.appendChild(document.createElement('span'));
+                    textEl.appendChild(el);
+                    textEl.appendChild(cursorEl);
+                  }}
+                }}
+                // Extract usage from final events
+                const usage = chunk.usage || (chunk.choices && chunk.choices[0] && chunk.choices[0].usage);
+                if (usage) {{
+                  const parts = [];
+                  if (usage.prompt_tokens !== undefined) parts.push('in:' + usage.prompt_tokens);
+                  if (usage.completion_tokens !== undefined) parts.push('out:' + usage.completion_tokens);
+                  if (usage.input_tokens !== undefined) parts.push('in:' + usage.input_tokens);
+                  if (usage.output_tokens !== undefined) parts.push('out:' + usage.output_tokens);
+                  if (parts.length) tokenEl.textContent = 'Tokens: ' + parts.join(' ');
+                }}
+              }} catch {{}}
+            }} else {{
+              let display = json;
+              try {{ display = JSON.stringify(JSON.parse(json), null, 2); }} catch {{}}
+              area.innerHTML += '<div class="stream-chunk">' + syntaxHighlight(display) + '</div>';
+            }}
           }} else if (trimmed.startsWith('event: ')) {{
-            area.innerHTML += '<div style="color:var(--muted)">event: ' + trimmed.slice(7) + '</div>';
+            if (!textMode) {{
+              area.innerHTML += '<div style="color:var(--muted)">event: ' + trimmed.slice(7) + '</div>';
+            }}
           }}
           area.scrollTop = area.scrollHeight;
         }}
       }}
+      if (textMode && cursorEl && cursorEl.parentNode) cursorEl.remove();
       const totalElapsed = ((performance.now() - startTime) / 1000).toFixed(2);
       statusEl.textContent = resp.status + ' Done';
       statusEl.className = 'status ok';

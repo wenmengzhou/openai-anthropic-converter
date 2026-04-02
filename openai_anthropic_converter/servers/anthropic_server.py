@@ -42,7 +42,7 @@ except ImportError:
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from openai_anthropic_converter import AnthropicToOpenAIConverter
 
@@ -107,12 +107,18 @@ _config: Dict[str, Any] = {
     "backend_url": "https://api.openai.com/v1/chat/completions",
     "backend_api_key": "",
     "timeout": 300,
+    "models": ["gpt-4o", "gpt-4o-mini"],
 }
 
 
 def configure(**kwargs: Any) -> None:
     """Update server configuration. Call before starting the server."""
     _config.update(kwargs)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
 
 
 # ── Health check ────────────────────────────────────────────────────────
@@ -132,7 +138,7 @@ async def debug_playground():
     """Interactive debug playground for testing API requests."""
     from .debug_page import get_debug_html
 
-    return HTMLResponse(get_debug_html("anthropic"))
+    return HTMLResponse(get_debug_html("anthropic", models=_config["models"]))
 
 
 # ── Messages endpoint ──────────────────────────────────────────────────
@@ -554,9 +560,15 @@ def main():
         default=os.environ.get("OPENAI_API_KEY", ""),
         help="OpenAI API key (default: $OPENAI_API_KEY)",
     )
-    parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8002, help="Bind port (default: 8002)")
     parser.add_argument("--timeout", type=int, default=300, help="Backend timeout in seconds")
+    parser.add_argument(
+        "--models",
+        default=os.environ.get("ANTHROPIC_SERVER_MODELS", os.environ.get("MODELS", "")),
+        help="Comma-separated list of available model names for debug page. "
+        "(default: $ANTHROPIC_SERVER_MODELS or $MODELS or gpt-4o,gpt-4o-mini)",
+    )
     parser.add_argument(
         "--log-level", default="info", choices=["debug", "info", "warning", "error"]
     )
@@ -571,10 +583,15 @@ def main():
 
     backend_url = _normalize_openai_url(args.backend_url)
 
+    models = [m.strip() for m in args.models.split(",") if m.strip()] if args.models else [
+        "gpt-4o", "gpt-4o-mini"
+    ]
+
     configure(
         backend_url=backend_url,
         backend_api_key=args.backend_api_key,
         timeout=args.timeout,
+        models=models,
     )
 
     logger.info("Starting Anthropic-compatible server on %s:%d", args.host, args.port)
