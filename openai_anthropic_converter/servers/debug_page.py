@@ -311,6 +311,8 @@ def get_debug_html(server_type: str, models: list[str] | None = None) -> str:
   .jt .collapsed > .close-bracket {{ display: none; }}
   .jt .collapsed > .ellipsis {{ display: inline; }}
   .jt .ellipsis {{ display: none; color: var(--muted); }}
+  .tab {{ border-radius: 4px 4px 0 0; padding: 3px 12px; font-size: 0.75rem; border-bottom: 2px solid transparent; }}
+  .tab.active {{ color: var(--accent); border-bottom-color: var(--accent); background: var(--bg); }}
   .stream-chunk {{ border-bottom: 1px dashed var(--border); padding-bottom: 4px; margin-bottom: 4px; }}
   .stream-text {{ white-space: pre-wrap; line-height: 1.6; font-size: 0.875rem; }}
   .stream-text .thinking-block {{
@@ -356,16 +358,15 @@ def get_debug_html(server_type: str, models: list[str] | None = None) -> str:
     <div class="panel">
       <div class="panel-header">
         <h2>Response</h2>
-        <button onclick="copyResponse()">Copy</button>
+        <div class="view-tabs" style="display:flex;gap:0;margin-left:8px;">
+          <button class="tab active" id="tabText" onclick="switchView('text')">Text</button>
+          <button class="tab" id="tabJson" onclick="switchView('json')">JSON</button>
+        </div>
+        <button onclick="copyResponse()" style="margin-left:auto;">Copy</button>
         <button onclick="clearResponse()">Clear</button>
-        <label style="font-size:0.8125rem; color:var(--muted); margin-left:auto;">
-          <input type="checkbox" id="streamText" checked> Text
-        </label>
-        <label style="font-size:0.8125rem; color:var(--muted);">
-          <input type="checkbox" id="prettyPrint" checked onchange="reformatResponse()"> Pretty
-        </label>
       </div>
       <div class="response-area" id="responseArea"></div>
+      <div class="response-area" id="responseJsonArea" style="display:none;"></div>
       <div class="status-bar">
         <span>Status: <span id="statusText" class="status">Ready</span></span>
         <span id="timingText"></span>
@@ -381,6 +382,8 @@ const EXAMPLES = {examples_js};
 const MODELS = {models_js};
 let abortController = null;
 let rawResponse = '';
+let rawTextContent = '';
+let currentView = 'text';
 
 function getSelectedModel() {{
   return document.getElementById('modelSel').value;
@@ -447,11 +450,15 @@ function getEndpoint() {{
 async function sendRequest() {{
   const ep = getEndpoint();
   const area = document.getElementById('responseArea');
+  const jsonArea = document.getElementById('responseJsonArea');
   const statusEl = document.getElementById('statusText');
   const timingEl = document.getElementById('timingText');
   const tokenEl = document.getElementById('tokenText');
   area.innerHTML = '';
+  jsonArea.innerHTML = '';
   rawResponse = '';
+  rawTextContent = '';
+  switchView('text');
   statusEl.textContent = 'Sending...';
   statusEl.className = 'status pending';
   timingEl.textContent = '';
@@ -474,26 +481,21 @@ async function sendRequest() {{
     const ct = resp.headers.get('content-type') || '';
 
     if (ct.includes('text/event-stream')) {{
-      // Streaming
-      const textMode = document.getElementById('streamText').checked;
+      // Streaming — always populate both Text and JSON views
       statusEl.textContent = resp.status + ' Streaming...';
       statusEl.className = 'status pending';
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
 
-      // Text mode state
-      let textEl = null;
+      // Text view state
+      area.innerHTML = '<div class="stream-text" id="streamTextArea"></div>';
+      const textEl = document.getElementById('streamTextArea');
+      const cursorEl = document.createElement('span');
+      cursorEl.className = 'stream-cursor';
+      textEl.appendChild(cursorEl);
       let thinkEl = null;
       let toolEls = {{}};
-      let cursorEl = null;
-      if (textMode) {{
-        area.innerHTML = '<div class="stream-text" id="streamTextArea"></div>';
-        textEl = document.getElementById('streamTextArea');
-        cursorEl = document.createElement('span');
-        cursorEl.className = 'stream-cursor';
-        textEl.appendChild(cursorEl);
-      }}
 
       while (true) {{
         const {{ done, value }} = await reader.read();
@@ -505,144 +507,133 @@ async function sendRequest() {{
           const trimmed = line.trim();
           if (!trimmed) continue;
           if (trimmed === 'data: [DONE]') {{
-            if (textMode) {{
-              if (cursorEl && cursorEl.parentNode) cursorEl.remove();
-            }} else {{
-              area.innerHTML += '<div class="stream-chunk" style="color:var(--green)">— stream done —</div>';
-            }}
+            jsonArea.innerHTML += '<div class="stream-chunk" style="color:var(--green)">— stream done —</div>';
             continue;
           }}
           if (trimmed.startsWith('data: ')) {{
             const json = trimmed.slice(6);
             rawResponse += json + '\\n';
 
-            if (textMode) {{
-              try {{
-                const chunk = JSON.parse(json);
-                // OpenAI format: choices[0].delta
-                const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta;
-                if (delta) {{
-                  // Text content
-                  if (delta.content) {{
-                    if (cursorEl && cursorEl.parentNode) cursorEl.remove();
-                    textEl.insertBefore(document.createTextNode(delta.content), null);
-                    textEl.appendChild(cursorEl);
-                  }}
-                  // Thinking blocks
-                  if (delta.thinking_blocks) {{
-                    delta.thinking_blocks.forEach(tb => {{
-                      if (tb.thinking) {{
-                        if (!thinkEl) {{
-                          if (cursorEl && cursorEl.parentNode) cursorEl.remove();
-                          thinkEl = document.createElement('div');
-                          thinkEl.className = 'thinking-block';
-                          thinkEl.innerHTML = '<div class="thinking-label">Thinking</div>';
-                          thinkEl.appendChild(document.createElement('span'));
-                          textEl.appendChild(thinkEl);
-                          textEl.appendChild(cursorEl);
-                        }}
-                        thinkEl.querySelector('span').textContent += tb.thinking;
-                      }}
-                    }});
-                  }}
-                  // Reasoning content (Bailian)
-                  if (delta.reasoning_content) {{
-                    if (!thinkEl) {{
-                      if (cursorEl && cursorEl.parentNode) cursorEl.remove();
-                      thinkEl = document.createElement('div');
-                      thinkEl.className = 'thinking-block';
-                      thinkEl.innerHTML = '<div class="thinking-label">Thinking</div>';
-                      thinkEl.appendChild(document.createElement('span'));
-                      textEl.appendChild(thinkEl);
-                      textEl.appendChild(cursorEl);
-                    }}
-                    thinkEl.querySelector('span').textContent += delta.reasoning_content;
-                  }}
-                  // Tool calls
-                  if (delta.tool_calls) {{
-                    delta.tool_calls.forEach(tc => {{
-                      const idx = tc.index || 0;
-                      if (!toolEls[idx]) {{
-                        // Close thinking block
-                        if (thinkEl) {{ thinkEl = null; }}
-                        if (cursorEl && cursorEl.parentNode) cursorEl.remove();
-                        const el = document.createElement('div');
-                        el.className = 'tool-block';
-                        const name = (tc.function && tc.function.name) || 'tool_call';
-                        el.innerHTML = '<div class="tool-label">Tool: ' + name + '</div>';
-                        el.appendChild(document.createElement('span'));
-                        textEl.appendChild(el);
-                        textEl.appendChild(cursorEl);
-                        toolEls[idx] = el;
-                      }}
-                      if (tc.function && tc.function.arguments) {{
-                        toolEls[idx].querySelector('span').textContent += tc.function.arguments;
-                      }}
-                    }});
-                  }}
-                  // Finish: close thinking
-                  if (chunk.choices[0].finish_reason) {{
-                    thinkEl = null;
-                    toolEls = {{}};
-                  }}
-                }}
-                // Anthropic format: type-based events
-                if (chunk.type === 'content_block_delta' && chunk.delta) {{
-                  if (cursorEl && cursorEl.parentNode) cursorEl.remove();
-                  if (chunk.delta.type === 'text_delta' && chunk.delta.text) {{
-                    textEl.insertBefore(document.createTextNode(chunk.delta.text), null);
-                  }} else if (chunk.delta.type === 'thinking_delta' && chunk.delta.thinking) {{
-                    if (!thinkEl) {{
-                      thinkEl = document.createElement('div');
-                      thinkEl.className = 'thinking-block';
-                      thinkEl.innerHTML = '<div class="thinking-label">Thinking</div>';
-                      thinkEl.appendChild(document.createElement('span'));
-                      textEl.appendChild(thinkEl);
-                    }}
-                    thinkEl.querySelector('span').textContent += chunk.delta.thinking;
-                  }} else if (chunk.delta.type === 'input_json_delta' && chunk.delta.partial_json) {{
-                    const lastTool = textEl.querySelector('.tool-block:last-of-type span');
-                    if (lastTool) lastTool.textContent += chunk.delta.partial_json;
-                  }}
+            // JSON view: append formatted chunk
+            let display = json;
+            try {{ display = JSON.stringify(JSON.parse(json), null, 2); }} catch {{}}
+            jsonArea.innerHTML += '<div class="stream-chunk">' + renderJson(display) + '</div>';
+            jsonArea.scrollTop = jsonArea.scrollHeight;
+
+            // Text view: extract and append content with typewriter effect
+            try {{
+              const chunk = JSON.parse(json);
+              // OpenAI format: choices[0].delta
+              const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta;
+              if (delta) {{
+                if (delta.content) {{
+                  cursorEl.remove();
+                  textEl.appendChild(document.createTextNode(delta.content));
                   textEl.appendChild(cursorEl);
                 }}
-                if (chunk.type === 'content_block_start' && chunk.content_block) {{
-                  if (chunk.content_block.type === 'tool_use') {{
-                    if (cursorEl && cursorEl.parentNode) cursorEl.remove();
-                    thinkEl = null;
-                    const el = document.createElement('div');
-                    el.className = 'tool-block';
-                    el.innerHTML = '<div class="tool-label">Tool: ' + (chunk.content_block.name || 'tool_call') + '</div>';
-                    el.appendChild(document.createElement('span'));
-                    textEl.appendChild(el);
+                if (delta.reasoning_content) {{
+                  if (!thinkEl) {{
+                    cursorEl.remove();
+                    thinkEl = document.createElement('div');
+                    thinkEl.className = 'thinking-block';
+                    thinkEl.innerHTML = '<div class="thinking-label">Thinking</div>';
+                    thinkEl.appendChild(document.createElement('span'));
+                    textEl.appendChild(thinkEl);
                     textEl.appendChild(cursorEl);
                   }}
+                  thinkEl.querySelector('span').textContent += delta.reasoning_content;
                 }}
-                // Extract usage from final events
-                const usage = chunk.usage || (chunk.choices && chunk.choices[0] && chunk.choices[0].usage);
-                if (usage) {{
-                  const parts = [];
-                  if (usage.prompt_tokens !== undefined) parts.push('in:' + usage.prompt_tokens);
-                  if (usage.completion_tokens !== undefined) parts.push('out:' + usage.completion_tokens);
-                  if (usage.input_tokens !== undefined) parts.push('in:' + usage.input_tokens);
-                  if (usage.output_tokens !== undefined) parts.push('out:' + usage.output_tokens);
-                  if (parts.length) tokenEl.textContent = 'Tokens: ' + parts.join(' ');
+                if (delta.thinking_blocks) {{
+                  delta.thinking_blocks.forEach(tb => {{
+                    if (tb.thinking) {{
+                      if (!thinkEl) {{
+                        cursorEl.remove();
+                        thinkEl = document.createElement('div');
+                        thinkEl.className = 'thinking-block';
+                        thinkEl.innerHTML = '<div class="thinking-label">Thinking</div>';
+                        thinkEl.appendChild(document.createElement('span'));
+                        textEl.appendChild(thinkEl);
+                        textEl.appendChild(cursorEl);
+                      }}
+                      thinkEl.querySelector('span').textContent += tb.thinking;
+                    }}
+                  }});
                 }}
-              }} catch {{}}
-            }} else {{
-              let display = json;
-              try {{ display = JSON.stringify(JSON.parse(json), null, 2); }} catch {{}}
-              area.innerHTML += '<div class="stream-chunk">' + renderJson(display) + '</div>';
-            }}
+                if (delta.tool_calls) {{
+                  delta.tool_calls.forEach(tc => {{
+                    const idx = tc.index || 0;
+                    if (!toolEls[idx]) {{
+                      thinkEl = null;
+                      cursorEl.remove();
+                      const el = document.createElement('div');
+                      el.className = 'tool-block';
+                      const name = (tc.function && tc.function.name) || 'tool_call';
+                      el.innerHTML = '<div class="tool-label">Tool: ' + name + '</div>';
+                      el.appendChild(document.createElement('span'));
+                      textEl.appendChild(el);
+                      textEl.appendChild(cursorEl);
+                      toolEls[idx] = el;
+                    }}
+                    if (tc.function && tc.function.arguments) {{
+                      toolEls[idx].querySelector('span').textContent += tc.function.arguments;
+                    }}
+                  }});
+                }}
+                if (chunk.choices[0].finish_reason) {{
+                  thinkEl = null; toolEls = {{}};
+                }}
+              }}
+              // Anthropic format
+              if (chunk.type === 'content_block_delta' && chunk.delta) {{
+                cursorEl.remove();
+                if (chunk.delta.type === 'text_delta' && chunk.delta.text) {{
+                  textEl.appendChild(document.createTextNode(chunk.delta.text));
+                }} else if (chunk.delta.type === 'thinking_delta' && chunk.delta.thinking) {{
+                  if (!thinkEl) {{
+                    thinkEl = document.createElement('div');
+                    thinkEl.className = 'thinking-block';
+                    thinkEl.innerHTML = '<div class="thinking-label">Thinking</div>';
+                    thinkEl.appendChild(document.createElement('span'));
+                    textEl.appendChild(thinkEl);
+                  }}
+                  thinkEl.querySelector('span').textContent += chunk.delta.thinking;
+                }} else if (chunk.delta.type === 'input_json_delta' && chunk.delta.partial_json) {{
+                  const lastTool = textEl.querySelector('.tool-block:last-of-type span');
+                  if (lastTool) lastTool.textContent += chunk.delta.partial_json;
+                }}
+                textEl.appendChild(cursorEl);
+              }}
+              if (chunk.type === 'content_block_start' && chunk.content_block) {{
+                if (chunk.content_block.type === 'tool_use') {{
+                  cursorEl.remove();
+                  thinkEl = null;
+                  const el = document.createElement('div');
+                  el.className = 'tool-block';
+                  el.innerHTML = '<div class="tool-label">Tool: ' + (chunk.content_block.name || 'tool_call') + '</div>';
+                  el.appendChild(document.createElement('span'));
+                  textEl.appendChild(el);
+                  textEl.appendChild(cursorEl);
+                }}
+              }}
+              // Extract usage
+              const usage = chunk.usage || (chunk.choices && chunk.choices[0] && chunk.choices[0].usage);
+              if (usage) {{
+                const parts = [];
+                if (usage.prompt_tokens !== undefined) parts.push('in:' + usage.prompt_tokens);
+                if (usage.completion_tokens !== undefined) parts.push('out:' + usage.completion_tokens);
+                if (usage.input_tokens !== undefined) parts.push('in:' + usage.input_tokens);
+                if (usage.output_tokens !== undefined) parts.push('out:' + usage.output_tokens);
+                if (parts.length) tokenEl.textContent = 'Tokens: ' + parts.join(' ');
+              }}
+            }} catch {{}}
           }} else if (trimmed.startsWith('event: ')) {{
-            if (!textMode) {{
-              area.innerHTML += '<div style="color:var(--muted)">event: ' + trimmed.slice(7) + '</div>';
-            }}
+            jsonArea.innerHTML += '<div style="color:var(--muted)">event: ' + trimmed.slice(7) + '</div>';
           }}
           area.scrollTop = area.scrollHeight;
         }}
       }}
-      if (textMode && cursorEl && cursorEl.parentNode) cursorEl.remove();
+      cursorEl.remove();
+      rawTextContent = textEl.textContent;
       const totalElapsed = ((performance.now() - startTime) / 1000).toFixed(2);
       statusEl.textContent = resp.status + ' Done';
       statusEl.className = 'status ok';
@@ -655,29 +646,35 @@ async function sendRequest() {{
       statusEl.className = 'status ' + (resp.ok ? 'ok' : 'err');
       timingEl.textContent = 'Time: ' + elapsed + 's';
 
-      if (document.getElementById('prettyPrint').checked) {{
-        try {{
-          area.innerHTML = renderJson(text);
-        }} catch {{
-          area.textContent = text;
-        }}
-      }} else {{
-        area.textContent = text;
+      // JSON view
+      try {{
+        jsonArea.innerHTML = renderJson(text);
+      }} catch {{
+        jsonArea.textContent = text;
       }}
 
-      // Extract token info
+      // Text view: extract readable content
       try {{
         const data = JSON.parse(text);
+        const parts = extractTextContent(data);
+        if (parts.length > 0) {{
+          renderTextView(parts, area);
+        }} else {{
+          area.innerHTML = renderJson(text);
+        }}
+        // Extract token info
         const usage = data.usage;
         if (usage) {{
-          const parts = [];
-          if (usage.prompt_tokens !== undefined) parts.push('in:' + usage.prompt_tokens);
-          if (usage.completion_tokens !== undefined) parts.push('out:' + usage.completion_tokens);
-          if (usage.input_tokens !== undefined) parts.push('in:' + usage.input_tokens);
-          if (usage.output_tokens !== undefined) parts.push('out:' + usage.output_tokens);
-          tokenEl.textContent = 'Tokens: ' + parts.join(' ');
+          const tp = [];
+          if (usage.prompt_tokens !== undefined) tp.push('in:' + usage.prompt_tokens);
+          if (usage.completion_tokens !== undefined) tp.push('out:' + usage.completion_tokens);
+          if (usage.input_tokens !== undefined) tp.push('in:' + usage.input_tokens);
+          if (usage.output_tokens !== undefined) tp.push('out:' + usage.output_tokens);
+          tokenEl.textContent = 'Tokens: ' + tp.join(' ');
         }}
-      }} catch {{}}
+      }} catch {{
+        area.textContent = text;
+      }}
     }}
   }} catch (e) {{
     if (e.name === 'AbortError') {{
@@ -699,31 +696,95 @@ function cancelRequest() {{
   if (abortController) abortController.abort();
 }}
 
+function switchView(view) {{
+  currentView = view;
+  document.getElementById('tabText').className = 'tab' + (view === 'text' ? ' active' : '');
+  document.getElementById('tabJson').className = 'tab' + (view === 'json' ? ' active' : '');
+  document.getElementById('responseArea').style.display = view === 'text' ? '' : 'none';
+  document.getElementById('responseJsonArea').style.display = view === 'json' ? '' : 'none';
+}}
+
 function copyResponse() {{
-  navigator.clipboard.writeText(rawResponse || document.getElementById('responseArea').textContent);
+  if (currentView === 'text') {{
+    navigator.clipboard.writeText(rawTextContent || document.getElementById('responseArea').textContent);
+  }} else {{
+    navigator.clipboard.writeText(rawResponse || document.getElementById('responseJsonArea').textContent);
+  }}
 }}
 
 function clearResponse() {{
   document.getElementById('responseArea').innerHTML = '';
+  document.getElementById('responseJsonArea').innerHTML = '';
   rawResponse = '';
+  rawTextContent = '';
   document.getElementById('statusText').textContent = 'Ready';
   document.getElementById('statusText').className = 'status';
   document.getElementById('timingText').textContent = '';
   document.getElementById('tokenText').textContent = '';
 }}
 
-function reformatResponse() {{
-  if (!rawResponse) return;
-  const area = document.getElementById('responseArea');
-  if (document.getElementById('prettyPrint').checked) {{
-    try {{
-      area.innerHTML = renderJson(rawResponse);
-    }} catch {{
-      area.textContent = rawResponse;
+function extractTextContent(data) {{
+  // Extract readable text from OpenAI or Anthropic response
+  let parts = [];
+  // OpenAI format
+  if (data.choices && data.choices[0] && data.choices[0].message) {{
+    const msg = data.choices[0].message;
+    if (msg.thinking_blocks) {{
+      msg.thinking_blocks.forEach(tb => {{
+        if (tb.thinking) parts.push({{ type: 'thinking', text: tb.thinking }});
+      }});
     }}
-  }} else {{
-    area.textContent = rawResponse;
+    if (msg.content) parts.push({{ type: 'text', text: msg.content }});
+    if (msg.tool_calls) {{
+      msg.tool_calls.forEach(tc => {{
+        const name = tc.function ? tc.function.name : 'tool';
+        const args = tc.function ? tc.function.arguments : '';
+        parts.push({{ type: 'tool', name: name, text: args }});
+      }});
+    }}
   }}
+  // Anthropic format
+  if (data.content && Array.isArray(data.content)) {{
+    data.content.forEach(block => {{
+      if (block.type === 'thinking' && block.thinking) {{
+        parts.push({{ type: 'thinking', text: block.thinking }});
+      }} else if (block.type === 'text' && block.text) {{
+        parts.push({{ type: 'text', text: block.text }});
+      }} else if (block.type === 'tool_use') {{
+        parts.push({{ type: 'tool', name: block.name || 'tool', text: JSON.stringify(block.input || {{}}, null, 2) }});
+      }}
+    }});
+  }}
+  return parts;
+}}
+
+function renderTextView(parts, area) {{
+  area.innerHTML = '';
+  const container = document.createElement('div');
+  container.className = 'stream-text';
+  parts.forEach(p => {{
+    if (p.type === 'thinking') {{
+      const el = document.createElement('div');
+      el.className = 'thinking-block';
+      el.innerHTML = '<div class="thinking-label">Thinking</div>';
+      const span = document.createElement('span');
+      span.textContent = p.text;
+      el.appendChild(span);
+      container.appendChild(el);
+    }} else if (p.type === 'tool') {{
+      const el = document.createElement('div');
+      el.className = 'tool-block';
+      el.innerHTML = '<div class="tool-label">Tool: ' + esc(p.name) + '</div>';
+      const span = document.createElement('span');
+      span.textContent = p.text;
+      el.appendChild(span);
+      container.appendChild(el);
+    }} else {{
+      container.appendChild(document.createTextNode(p.text));
+    }}
+  }});
+  area.appendChild(container);
+  rawTextContent = container.textContent;
 }}
 
 function esc(s) {{ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }}
