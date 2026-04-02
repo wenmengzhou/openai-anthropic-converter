@@ -665,3 +665,78 @@ class TestOpenAPIAndDebug:
         req_schema = components["AnthropicMessagesRequest"]
         assert "model" in req_schema.get("properties", {})
         assert "messages" in req_schema.get("properties", {})
+
+
+# ── Logging tests ────────────────────────────────────────────────────────
+
+
+class TestLoggingConfig:
+    """Tests for the shared logging configuration."""
+
+    def test_setup_logging_creates_handlers(self, tmp_path):
+        """setup_logging should create console and file handlers."""
+        import logging
+
+        from openai_anthropic_converter.servers.logging_config import setup_logging
+
+        setup_logging("test_server", level="debug", log_dir=str(tmp_path))
+        root = logging.getLogger()
+
+        handler_types = [type(h).__name__ for h in root.handlers]
+        assert "StreamHandler" in handler_types
+        assert "RotatingFileHandler" in handler_types
+
+        # Cleanup
+        root.handlers.clear()
+
+    def test_setup_logging_creates_log_file(self, tmp_path):
+        """setup_logging should create the log file and write to it."""
+        import logging
+
+        from openai_anthropic_converter.servers.logging_config import setup_logging
+
+        setup_logging("test_file_server", level="info", log_dir=str(tmp_path))
+        logger = logging.getLogger("test_file_server")
+        logger.info("test message for file output")
+
+        log_file = tmp_path / "test_file_server.log"
+        assert log_file.exists()
+        content = log_file.read_text()
+        assert "test message for file output" in content
+
+        # Cleanup
+        logging.getLogger().handlers.clear()
+
+    def test_log_format_contains_expected_fields(self, tmp_path):
+        """Log output should contain timestamp, level, filename, line number."""
+        import logging
+
+        from openai_anthropic_converter.servers.logging_config import setup_logging
+
+        setup_logging("test_format_server", level="info", log_dir=str(tmp_path))
+        logger = logging.getLogger("test_format_server")
+        logger.warning("format check message")
+
+        log_file = tmp_path / "test_format_server.log"
+        content = log_file.read_text()
+        assert "WARNING" in content
+        assert "format check message" in content
+        # filename:lineno pattern
+        assert "test_servers.py:" in content
+
+        # Cleanup
+        logging.getLogger().handlers.clear()
+
+    def test_setup_logging_creates_directory(self, tmp_path):
+        """setup_logging should create the log directory if it doesn't exist."""
+        import logging
+
+        from openai_anthropic_converter.servers.logging_config import setup_logging
+
+        log_dir = tmp_path / "nested" / "log" / "dir"
+        setup_logging("test_dir_server", level="info", log_dir=str(log_dir))
+
+        assert log_dir.exists()
+
+        # Cleanup
+        logging.getLogger().handlers.clear()

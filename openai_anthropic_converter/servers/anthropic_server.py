@@ -73,9 +73,7 @@ def _custom_openapi():
 
     # Add request schemas
     for model_cls in (AnthropicMessagesRequest, AnthropicCountTokensRequest):
-        model_schema = model_cls.model_json_schema(
-            ref_template="#/components/schemas/{model}"
-        )
+        model_schema = model_cls.model_json_schema(ref_template="#/components/schemas/{model}")
         name = model_cls.__name__
         # Move nested $defs to top-level components/schemas
         for def_name, definition in model_schema.pop("$defs", {}).items():
@@ -84,6 +82,7 @@ def _custom_openapi():
 
     app.openapi_schema = schema
     return schema
+
 
 logger = logging.getLogger("anthropic_server")
 
@@ -169,9 +168,7 @@ async def debug_playground():
                         "type": "message",
                         "role": "assistant",
                         "model": "gpt-4o",
-                        "content": [
-                            {"type": "text", "text": "Hello! How can I help you today?"}
-                        ],
+                        "content": [{"type": "text", "text": "Hello! How can I help you today?"}],
                         "stop_reason": "end_turn",
                         "stop_sequence": None,
                         "usage": {"input_tokens": 10, "output_tokens": 8},
@@ -179,10 +176,10 @@ async def debug_playground():
                 },
                 "text/event-stream": {
                     "example": (
-                        "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{...}}\n\n"
+                        'event: message_start\ndata: {"type":"message_start","message":{...}}\n\n'
                         "event: content_block_start\ndata: {...}\n\n"
                         "event: content_block_delta\ndata: {...}\n\n"
-                        "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+                        'event: message_stop\ndata: {"type":"message_stop"}\n\n'
                     )
                 },
             },
@@ -572,10 +569,17 @@ def main():
     parser.add_argument(
         "--log-level", default="info", choices=["debug", "info", "warning", "error"]
     )
+    parser.add_argument(
+        "--log-dir",
+        default=os.environ.get("LOG_DIR", "logs"),
+        help="Directory for log files (default: $LOG_DIR or logs/)",
+    )
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=getattr(logging, args.log_level.upper()))
+    from .logging_config import setup_logging
+
+    setup_logging("anthropic_server", level=args.log_level, log_dir=args.log_dir)
 
     if not args.backend_api_key:
         logger.error("No API key provided. Set --backend-api-key or $OPENAI_API_KEY")
@@ -583,9 +587,11 @@ def main():
 
     backend_url = _normalize_openai_url(args.backend_url)
 
-    models = [m.strip() for m in args.models.split(",") if m.strip()] if args.models else [
-        "gpt-4o", "gpt-4o-mini"
-    ]
+    models = (
+        [m.strip() for m in args.models.split(",") if m.strip()]
+        if args.models
+        else ["gpt-4o", "gpt-4o-mini"]
+    )
 
     configure(
         backend_url=backend_url,

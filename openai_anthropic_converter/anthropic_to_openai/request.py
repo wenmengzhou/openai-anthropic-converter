@@ -330,7 +330,6 @@ def convert_tool_choice(
     return "auto"
 
 
-
 def convert_output_format_to_response_format(
     output_format: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
