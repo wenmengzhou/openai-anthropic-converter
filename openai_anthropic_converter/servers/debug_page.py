@@ -296,11 +296,21 @@ def get_debug_html(server_type: str, models: list[str] | None = None) -> str:
   .status-bar .ok {{ color: var(--green); }}
   .status-bar .err {{ color: var(--red); }}
   .status-bar .pending {{ color: var(--orange); }}
-  .json-key {{ color: #79c0ff; }}
-  .json-str {{ color: #a5d6ff; }}
-  .json-num {{ color: #d2a8ff; }}
-  .json-bool {{ color: #ff7b72; }}
-  .json-null {{ color: var(--muted); }}
+  .jt {{ font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8125rem; line-height: 1.5; }}
+  .jt .k {{ color: #79c0ff; }}
+  .jt .s {{ color: #a5d6ff; }}
+  .jt .n {{ color: #d2a8ff; }}
+  .jt .b {{ color: #ff7b72; }}
+  .jt .nl {{ color: var(--muted); }}
+  .jt .tog {{
+    display: inline-block; width: 1em; text-align: center; cursor: pointer;
+    color: var(--muted); user-select: none; font-size: 0.75rem;
+  }}
+  .jt .tog:hover {{ color: var(--accent); }}
+  .jt .collapsed > .inner {{ display: none; }}
+  .jt .collapsed > .close-bracket {{ display: none; }}
+  .jt .collapsed > .ellipsis {{ display: inline; }}
+  .jt .ellipsis {{ display: none; color: var(--muted); }}
   .stream-chunk {{ border-bottom: 1px dashed var(--border); padding-bottom: 4px; margin-bottom: 4px; }}
   .stream-text {{ white-space: pre-wrap; line-height: 1.6; font-size: 0.875rem; }}
   .stream-text .thinking-block {{
@@ -622,7 +632,7 @@ async function sendRequest() {{
             }} else {{
               let display = json;
               try {{ display = JSON.stringify(JSON.parse(json), null, 2); }} catch {{}}
-              area.innerHTML += '<div class="stream-chunk">' + syntaxHighlight(display) + '</div>';
+              area.innerHTML += '<div class="stream-chunk">' + renderJson(display) + '</div>';
             }}
           }} else if (trimmed.startsWith('event: ')) {{
             if (!textMode) {{
@@ -647,7 +657,7 @@ async function sendRequest() {{
 
       if (document.getElementById('prettyPrint').checked) {{
         try {{
-          area.innerHTML = syntaxHighlight(JSON.stringify(JSON.parse(text), null, 2));
+          area.innerHTML = renderJson(text);
         }} catch {{
           area.textContent = text;
         }}
@@ -707,7 +717,7 @@ function reformatResponse() {{
   const area = document.getElementById('responseArea');
   if (document.getElementById('prettyPrint').checked) {{
     try {{
-      area.innerHTML = syntaxHighlight(JSON.stringify(JSON.parse(rawResponse), null, 2));
+      area.innerHTML = renderJson(rawResponse);
     }} catch {{
       area.textContent = rawResponse;
     }}
@@ -716,15 +726,65 @@ function reformatResponse() {{
   }}
 }}
 
-function syntaxHighlight(json) {{
-  if (typeof json !== 'string') json = JSON.stringify(json, null, 2);
-  return json
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"\\s*:/g, '<span class="json-key">"$1"</span>:')
-    .replace(/"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"/g, '<span class="json-str">"$1"</span>')
-    .replace(/\\b(true|false)\\b/g, '<span class="json-bool">$1</span>')
-    .replace(/\\bnull\\b/g, '<span class="json-null">null</span>')
-    .replace(/\\b(-?\\d+\\.?\\d*(?:[eE][+-]?\\d+)?)\\b/g, '<span class="json-num">$1</span>');
+function esc(s) {{ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }}
+
+function renderJsonToHtml(val, indent) {{
+  indent = indent || 0;
+  const pad = '  '.repeat(indent);
+  const pad1 = '  '.repeat(indent + 1);
+  if (val === null) return '<span class="nl">null</span>';
+  if (typeof val === 'boolean') return '<span class="b">' + val + '</span>';
+  if (typeof val === 'number') return '<span class="n">' + val + '</span>';
+  if (typeof val === 'string') return '<span class="s">"' + esc(val) + '"</span>';
+  if (Array.isArray(val)) {{
+    if (val.length === 0) return '[]';
+    const items = val.map((v, i) => {{
+      const comma = i < val.length - 1 ? ',' : '';
+      return pad1 + renderJsonToHtml(v, indent + 1) + comma;
+    }});
+    const id = 'jn' + (++renderJsonToHtml._id);
+    return '<span id="' + id + '"><span class="tog" onclick="toggleJson(\\''+id+'\\')">-</span>[\\n'
+      + '<span class="inner">' + items.join('\\n') + '\\n' + pad + '</span>'
+      + '<span class="ellipsis"> ...' + val.length + ' items ]</span>'
+      + '<span class="close-bracket">]</span></span>';
+  }}
+  if (typeof val === 'object') {{
+    const keys = Object.keys(val);
+    if (keys.length === 0) return '{{}}';
+    const items = keys.map((k, i) => {{
+      const comma = i < keys.length - 1 ? ',' : '';
+      return pad1 + '<span class="k">"' + esc(k) + '"</span>: ' + renderJsonToHtml(val[k], indent + 1) + comma;
+    }});
+    const id = 'jn' + (++renderJsonToHtml._id);
+    return '<span id="' + id + '"><span class="tog" onclick="toggleJson(\\''+id+'\\')">-</span>{{\\n'
+      + '<span class="inner">' + items.join('\\n') + '\\n' + pad + '</span>'
+      + '<span class="ellipsis"> ...' + keys.length + ' keys }}</span>'
+      + '<span class="close-bracket">}}</span></span>';
+  }}
+  return esc(String(val));
+}}
+renderJsonToHtml._id = 0;
+
+function toggleJson(id) {{
+  const el = document.getElementById(id);
+  if (!el) return;
+  const tog = el.querySelector(':scope > .tog');
+  if (el.classList.contains('collapsed')) {{
+    el.classList.remove('collapsed');
+    tog.textContent = '-';
+  }} else {{
+    el.classList.add('collapsed');
+    tog.textContent = '+';
+  }}
+}}
+
+function renderJson(text) {{
+  try {{
+    const obj = typeof text === 'string' ? JSON.parse(text) : text;
+    return '<div class="jt"><pre style="margin:0;white-space:pre-wrap;">' + renderJsonToHtml(obj, 0) + '</pre></div>';
+  }} catch {{
+    return '<pre style="margin:0;">' + esc(typeof text === 'string' ? text : JSON.stringify(text)) + '</pre>';
+  }}
 }}
 
 // Ctrl+Enter to send
