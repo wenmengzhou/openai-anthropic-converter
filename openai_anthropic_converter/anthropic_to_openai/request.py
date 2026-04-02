@@ -201,13 +201,14 @@ def _convert_assistant_message(
                     tool_calls.append(tc)
 
                 elif block_type == "thinking":
-                    thinking_blocks.append(
-                        {
-                            "type": "thinking",
-                            "thinking": block.get("thinking", ""),
-                            "signature": block.get("signature", ""),
-                        }
-                    )
+                    tb_entry: Dict[str, Any] = {
+                        "type": "thinking",
+                        "thinking": block.get("thinking", ""),
+                    }
+                    sig = block.get("signature")
+                    if sig:
+                        tb_entry["signature"] = sig
+                    thinking_blocks.append(tb_entry)
 
                 elif block_type == "redacted_thinking":
                     thinking_blocks.append(
@@ -472,5 +473,9 @@ def convert_request(
         val = request.pop(param, None)
         if val is not None:
             result[param] = val
+
+    # Silently drop Anthropic-only params that have no OpenAI equivalent
+    for param in ("top_k", "context_management", "cache_control"):
+        request.pop(param, None)
 
     return result, tool_name_mapping

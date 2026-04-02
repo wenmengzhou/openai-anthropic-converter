@@ -2781,6 +2781,72 @@ class TestRound10to12:
         assert text_blocks[0]["text"] == ""
 
 
+class TestRound15:
+    """Round 15: Edge case fixes."""
+
+    def test_request_thinking_block_no_spurious_signature(self):
+        """Thinking blocks without signature should not include signature key."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "Let me think..."},
+                        {"type": "text", "text": "Answer"},
+                    ],
+                },
+                {"role": "user", "content": "Thanks"},
+            ],
+            "max_tokens": 100,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assistant_msgs = [m for m in result["messages"] if m["role"] == "assistant"]
+        assert len(assistant_msgs) == 1
+        tb = assistant_msgs[0]["thinking_blocks"][0]
+        assert "signature" not in tb
+
+    def test_request_thinking_block_with_signature_preserved(self):
+        """Thinking blocks with signature should include it."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": "Let me think...",
+                            "signature": "abc123",
+                        },
+                        {"type": "text", "text": "Answer"},
+                    ],
+                },
+                {"role": "user", "content": "Thanks"},
+            ],
+            "max_tokens": 100,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assistant_msgs = [m for m in result["messages"] if m["role"] == "assistant"]
+        tb = assistant_msgs[0]["thinking_blocks"][0]
+        assert tb["signature"] == "abc123"
+
+    def test_request_anthropic_only_params_dropped(self):
+        """Anthropic-only params (top_k, context_management, cache_control) should be dropped."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 100,
+            "top_k": 40,
+            "context_management": {"edits": []},
+            "cache_control": {"type": "ephemeral"},
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assert "top_k" not in result
+        assert "context_management" not in result
+        assert "cache_control" not in result
+
+
 class TestRound13to14:
     """Rounds 13-14: Bailian compat streaming tests."""
 
