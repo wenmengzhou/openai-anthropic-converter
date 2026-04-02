@@ -305,10 +305,12 @@ async def _non_stream_response(
         logger.error(
             "Backend (OpenAI) error %d:\n"
             "  URL: %s\n"
+            "  Request body: %s\n"
             "  Response headers: %s\n"
             "  Response body: %s",
             resp.status_code,
             _config["backend_url"],
+            json.dumps(openai_request, ensure_ascii=False)[:2000],
             dict(resp.headers),
             body[:2000],
         )
@@ -363,10 +365,12 @@ async def _stream_response(
                     logger.error(
                         "Backend (OpenAI) stream error %d:\n"
                         "  URL: %s\n"
+                        "  Request body: %s\n"
                         "  Response headers: %s\n"
                         "  Response body: %s",
                         resp.status_code,
                         _config["backend_url"],
+                        json.dumps(openai_request, ensure_ascii=False)[:2000],
                         dict(resp.headers),
                         body_str[:2000],
                     )
