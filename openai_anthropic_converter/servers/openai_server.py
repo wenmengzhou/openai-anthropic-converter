@@ -27,7 +27,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, AsyncIterator, Dict, Union
+from typing import Any, AsyncIterator, Dict
 
 try:
     from dotenv import load_dotenv

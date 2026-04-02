@@ -2171,7 +2171,6 @@ class TestRound4EdgeCases:
             _make_chunk({}, finish_reason="tool_calls"),
         ]
         events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
-        event_types = [e["type"] for e in events]
 
         # Text block should be opened and closed before tool block
         text_start_idx = next(i for i, e in enumerate(events) if e["type"] == "content_block_start" and e.get("content_block", {}).get("type") == "text")
@@ -2432,7 +2431,6 @@ class TestRound6EdgeCases:
         events = list(
             AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
         )
-        event_types = [e["type"] for e in events]
 
         # Should have: message_start, content_block_start(thinking),
         # content_block_delta(thinking), content_block_stop,

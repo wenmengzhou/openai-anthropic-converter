@@ -222,7 +222,6 @@ def get_debug_html(server_type: str, models: list[str] | None = None) -> str:
             {"path": "/v1/models", "method": "GET", "label": "List Models"},
             {"path": "/health", "method": "GET", "label": "Health Check"},
         ])
-        default_endpoint = "/v1/chat/completions"
     else:
         title = "Anthropic-Compatible Server Debug Playground"
         examples = ANTHROPIC_EXAMPLES
@@ -231,7 +230,6 @@ def get_debug_html(server_type: str, models: list[str] | None = None) -> str:
             {"path": "/v1/messages/count_tokens", "method": "POST", "label": "Count Tokens"},
             {"path": "/health", "method": "GET", "label": "Health Check"},
         ])
-        default_endpoint = "/v1/messages"
 
     examples_js = json.dumps(examples, indent=2)
     models_js = json.dumps(models)

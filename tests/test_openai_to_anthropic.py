@@ -1482,7 +1482,7 @@ class TestEdgeCases:
         assert result["tool_choice"]["type"] == "tool"
         assert result["tool_choice"]["name"] == "json_tool_call"
 
-    def test_context_management_conversion(self):
+    def test_context_management_with_compaction(self):
         """OpenAI context_management should convert to Anthropic format."""
         openai_req = {
             "model": "test",
@@ -1816,7 +1816,7 @@ class TestEdgeCases:
         assert isinstance(tool_results[0]["content"], list)
         assert len(tool_results[0]["content"]) == 2
 
-    def test_thinking_passthrough(self):
+    def test_thinking_passthrough_with_budget(self):
         """thinking param in OpenAI request should pass through to Anthropic."""
         openai_req = {
             "model": "test",
