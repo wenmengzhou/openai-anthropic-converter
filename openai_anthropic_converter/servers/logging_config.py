@@ -2,7 +2,7 @@
 Shared logging configuration for proxy servers.
 
 Sets up logging with:
-- Console handler (stdout) with colored level
+- Console handler (stdout)
 - File handler (rotating) with full details
 - Format: timestamp, level, filename:lineno, message
 """
