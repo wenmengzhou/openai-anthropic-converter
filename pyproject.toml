@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Standalone bidirectional protocol converter between OpenAI Chat Completion API and Anthropic Messages API"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "typing_extensions>=4.0",
 ]
