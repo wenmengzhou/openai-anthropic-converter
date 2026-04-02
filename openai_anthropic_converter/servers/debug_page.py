@@ -192,6 +192,7 @@ def get_debug_html(server_type: str, models: list[str] | None = None) -> str:
     if not models:
         models = ["claude-sonnet-4-20250514"] if server_type == "openai" else ["gpt-4o"]
 
+    examples: dict[str, dict[str, object]] | dict[str, object]
     if server_type == "openai":
         title = "OpenAI-Compatible Server Debug Playground"
         examples = OPENAI_EXAMPLES
