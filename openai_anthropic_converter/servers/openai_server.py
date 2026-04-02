@@ -29,6 +29,13 @@ import os
 import sys
 from typing import Any, AsyncIterator, Dict, Union
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -361,14 +368,32 @@ async def _parse_and_convert_sse(
 # ── CLI entry point ─────────────────────────────────────────────────────
 
 
+def _normalize_anthropic_url(url: str) -> str:
+    """
+    Normalize an Anthropic base URL to the messages endpoint.
+
+    Accepts:
+      - https://api.anthropic.com/v1                  -> append /messages
+      - https://api.anthropic.com/v1/                 -> append messages
+      - https://xxx.example.com/anthropic-native/v1   -> append /messages
+      - https://api.anthropic.com/v1/messages         -> keep as-is
+    """
+    url = url.rstrip("/")
+    if not url.endswith("/messages"):
+        url = url + "/messages"
+    return url
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="OpenAI-compatible API server backed by Anthropic Messages API"
     )
     parser.add_argument(
         "--backend-url",
-        default=os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages"),
-        help="Anthropic Messages API URL (default: https://api.anthropic.com/v1/messages)",
+        default=os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
+        help="Anthropic base URL or messages endpoint URL. "
+        "/messages is appended automatically if missing. "
+        "(default: $ANTHROPIC_BASE_URL or https://api.anthropic.com/v1)",
     )
     parser.add_argument(
         "--backend-api-key",
@@ -391,15 +416,17 @@ def main():
         logger.error("No API key provided. Set --backend-api-key or $ANTHROPIC_API_KEY")
         sys.exit(1)
 
+    backend_url = _normalize_anthropic_url(args.backend_url)
+
     configure(
-        backend_url=args.backend_url,
+        backend_url=backend_url,
         backend_api_key=args.backend_api_key,
         timeout=args.timeout,
         default_max_tokens=args.default_max_tokens,
     )
 
     logger.info("Starting OpenAI-compatible server on %s:%d", args.host, args.port)
-    logger.info("Backend: %s", args.backend_url)
+    logger.info("Backend: %s", backend_url)
     logger.info("Swagger UI: http://%s:%d/docs", args.host, args.port)
     logger.info("Debug playground: http://%s:%d/debug", args.host, args.port)
 

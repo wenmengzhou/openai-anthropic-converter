@@ -32,6 +32,13 @@ import os
 import sys
 from typing import Any, AsyncIterator, Dict
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -469,14 +476,32 @@ def _map_status_to_error_type(status_code: int) -> str:
 # ── CLI entry point ─────────────────────────────────────────────────────
 
 
+def _normalize_openai_url(url: str) -> str:
+    """
+    Normalize an OpenAI-compatible base URL to the chat completions endpoint.
+
+    Accepts:
+      - https://api.openai.com/v1                     -> append /chat/completions
+      - https://api.openai.com/v1/                    -> append chat/completions
+      - https://dashscope.aliyuncs.com/compatible-mode/v1 -> append /chat/completions
+      - https://api.openai.com/v1/chat/completions    -> keep as-is
+    """
+    url = url.rstrip("/")
+    if not url.endswith("/chat/completions"):
+        url = url + "/chat/completions"
+    return url
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Anthropic-compatible API server backed by OpenAI ChatCompletion API"
     )
     parser.add_argument(
         "--backend-url",
-        default=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1/chat/completions"),
-        help="OpenAI ChatCompletion API URL (default: https://api.openai.com/v1/chat/completions)",
+        default=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        help="OpenAI base URL or chat completions URL. "
+        "/chat/completions is appended automatically if missing. "
+        "(default: $OPENAI_BASE_URL or https://api.openai.com/v1)",
     )
     parser.add_argument(
         "--backend-api-key",
@@ -498,14 +523,16 @@ def main():
         logger.error("No API key provided. Set --backend-api-key or $OPENAI_API_KEY")
         sys.exit(1)
 
+    backend_url = _normalize_openai_url(args.backend_url)
+
     configure(
-        backend_url=args.backend_url,
+        backend_url=backend_url,
         backend_api_key=args.backend_api_key,
         timeout=args.timeout,
     )
 
     logger.info("Starting Anthropic-compatible server on %s:%d", args.host, args.port)
-    logger.info("Backend: %s", args.backend_url)
+    logger.info("Backend: %s", backend_url)
     logger.info("Swagger UI: http://%s:%d/docs", args.host, args.port)
     logger.info("Debug playground: http://%s:%d/debug", args.host, args.port)
 

@@ -112,6 +112,13 @@ OPENAI_EXAMPLES = {
     },
 }
 
+# Note: model names are just examples. The server passes the model name through
+# to the backend as-is. Use whatever model name your backend supports, e.g.:
+#   - Anthropic: claude-sonnet-4-20250514, claude-opus-4-20250514
+#   - Bailian/DashScope Anthropic-native: claude-sonnet-4-20250514
+#   - OpenAI: gpt-4o, gpt-4o-mini
+#   - Bailian/DashScope OpenAI-compat: qwen-plus, qwen-max, qwen-turbo
+
 ANTHROPIC_EXAMPLES = {
     "Basic Message": {
         "model": "gpt-4o",
