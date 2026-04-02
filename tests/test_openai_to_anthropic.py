@@ -2023,3 +2023,365 @@ class TestEdgeCases:
         # Unknown types should be passed through
         audio_blocks = [b for b in user_content if b.get("type") == "audio"]
         assert len(audio_blocks) == 1
+
+
+class TestRound10to12:
+    """Rounds 10-12: Deeper edge case and integration tests."""
+
+    def test_tool_choice_required_string(self):
+        """tool_choice='required' should map to type='any'."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            "tool_choice": "required",
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["tool_choice"]["type"] == "any"
+
+    def test_tool_choice_specific_function(self):
+        """tool_choice with specific function should map to type='tool'."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            "tool_choice": {"type": "function", "function": {"name": "search"}},
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["tool_choice"]["type"] == "tool"
+        assert result["tool_choice"]["name"] == "search"
+
+    def test_parallel_tool_calls_false_without_tool_choice(self):
+        """parallel_tool_calls=False without tool_choice should create auto with disable."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            "parallel_tool_calls": False,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["tool_choice"]["type"] == "auto"
+        assert result["tool_choice"]["disable_parallel_tool_use"] is True
+
+    def test_image_url_base64_parsing(self):
+        """Base64 data URI should be converted to Anthropic image source."""
+        openai_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/png;base64,iVBORw0KGgo="
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        img_block = result["messages"][0]["content"][0]
+        assert img_block["type"] == "image"
+        assert img_block["source"]["type"] == "base64"
+        assert img_block["source"]["media_type"] == "image/png"
+        assert img_block["source"]["data"] == "iVBORw0KGgo="
+
+    def test_image_url_http(self):
+        """HTTP URL should be converted to Anthropic url source."""
+        openai_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "https://example.com/img.png"},
+                        }
+                    ],
+                }
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        img_block = result["messages"][0]["content"][0]
+        assert img_block["type"] == "image"
+        assert img_block["source"]["type"] == "url"
+        assert img_block["source"]["url"] == "https://example.com/img.png"
+
+    def test_multiple_system_messages(self):
+        """Multiple system messages should be combined into system blocks."""
+        openai_req = {
+            "model": "test",
+            "messages": [
+                {"role": "system", "content": "First instruction."},
+                {"role": "system", "content": "Second instruction."},
+                {"role": "user", "content": "Hi"},
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert len(result["system"]) == 2
+        assert result["system"][0]["text"] == "First instruction."
+        assert result["system"][1]["text"] == "Second instruction."
+
+    def test_tool_message_after_assistant_tool_call(self):
+        """Full tool use flow: user -> assistant(tool_call) -> tool(result) -> user."""
+        openai_req = {
+            "model": "test",
+            "messages": [
+                {"role": "user", "content": "What's the weather?"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_abc",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": '{"location": "NYC"}',
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_abc",
+                    "content": "72°F, sunny",
+                },
+                {"role": "user", "content": "Thanks!"},
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        msgs = result["messages"]
+        roles = [m["role"] for m in msgs]
+        # Should alternate correctly
+        for i in range(1, len(roles)):
+            assert roles[i] != roles[i - 1], f"Roles at {i-1} and {i} are both {roles[i]}"
+        # Tool result should be in a user message
+        tool_results = []
+        for msg in msgs:
+            if isinstance(msg.get("content"), list):
+                for block in msg["content"]:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        tool_results.append(block)
+        assert len(tool_results) == 1
+        assert tool_results[0]["tool_use_id"] == "call_abc"
+        assert tool_results[0]["content"] == "72°F, sunny"
+
+    def test_assistant_content_with_only_tool_calls(self):
+        """Assistant with content=None and tool_calls should produce tool_use blocks."""
+        openai_req = {
+            "model": "test",
+            "messages": [
+                {"role": "user", "content": "Search"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "search",
+                                "arguments": '{"q": "test"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "result"},
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        # Find assistant message
+        assistant_msgs = [m for m in result["messages"] if m["role"] == "assistant"]
+        assert len(assistant_msgs) == 1
+        # Should have tool_use block
+        tool_use_blocks = [
+            b
+            for b in assistant_msgs[0]["content"]
+            if isinstance(b, dict) and b.get("type") == "tool_use"
+        ]
+        assert len(tool_use_blocks) == 1
+        assert tool_use_blocks[0]["name"] == "search"
+
+    def test_response_multiple_text_blocks_concatenated(self):
+        """Multiple text blocks should be concatenated in OpenAI content."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "model": "test",
+            "content": [
+                {"type": "text", "text": "Hello "},
+                {"type": "text", "text": "world!"},
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        assert result["choices"][0]["message"]["content"] == "Hello world!"
+
+    def test_response_usage_with_cache_tokens(self):
+        """Cache tokens should be correctly mapped in usage."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "model": "test",
+            "content": [{"type": "text", "text": "Hi"}],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_creation_input_tokens": 20,
+                "cache_read_input_tokens": 30,
+            },
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        usage = result["usage"]
+        # prompt_tokens = input + cache_creation + cache_read
+        assert usage["prompt_tokens"] == 150
+        assert usage["completion_tokens"] == 50
+        assert usage["total_tokens"] == 200
+        assert usage["prompt_tokens_details"]["cached_tokens"] == 30
+        assert usage["prompt_tokens_details"]["cache_creation_tokens"] == 20
+
+    def test_response_with_thinking_and_reasoning_content(self):
+        """Response with thinking blocks should also set reasoning_content."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "model": "test",
+            "content": [
+                {"type": "thinking", "thinking": "Let me think about this..."},
+                {"type": "text", "text": "The answer is 42."},
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 20},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert msg["content"] == "The answer is 42."
+        assert msg["reasoning_content"] == "Let me think about this..."
+        assert len(msg["thinking_blocks"]) == 1
+
+    def test_stream_multiple_text_blocks(self):
+        """Multiple text content blocks in stream should produce separate deltas."""
+        events = [
+            {
+                "type": "message_start",
+                "message": {"id": "msg_1", "model": "test", "usage": {}},
+            },
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "First"},
+            },
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {"type": "text", "text": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {"type": "text_delta", "text": "Second"},
+            },
+            {"type": "content_block_stop", "index": 1},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 10},
+            },
+            {"type": "message_stop"},
+        ]
+        chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
+        text_chunks = [
+            c["choices"][0]["delta"]["content"]
+            for c in chunks
+            if c["choices"][0]["delta"].get("content")
+        ]
+        assert "First" in text_chunks
+        assert "Second" in text_chunks
+
+    def test_stream_tool_use_then_text(self):
+        """Stream with tool_use then text (unusual but possible in multi-turn)."""
+        events = [
+            {
+                "type": "message_start",
+                "message": {"id": "msg_1", "model": "test", "usage": {}},
+            },
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "tu_1",
+                    "name": "search",
+                },
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": '{"q":"test"}'},
+            },
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {"type": "text", "text": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {"type": "text_delta", "text": "Also here's some text"},
+            },
+            {"type": "content_block_stop", "index": 1},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 15},
+            },
+            {"type": "message_stop"},
+        ]
+        chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
+        # Should have tool call chunks and text chunks
+        tool_chunks = [
+            c
+            for c in chunks
+            if c["choices"][0]["delta"].get("tool_calls")
+        ]
+        text_chunks = [
+            c
+            for c in chunks
+            if c["choices"][0]["delta"].get("content")
+        ]
+        assert len(tool_chunks) >= 1
+        assert len(text_chunks) >= 1
