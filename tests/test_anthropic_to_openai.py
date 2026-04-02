@@ -2,6 +2,8 @@
 Tests for Anthropic -> OpenAI conversion.
 """
 
+import asyncio
+
 from openai_anthropic_converter import AnthropicToOpenAIConverter
 
 
@@ -2231,6 +2233,319 @@ class TestRound4EdgeCases:
         }
         result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
         assert result["user"] == "user-123"
+
+
+class TestRound6EdgeCases:
+    """Round 6: Final edge cases and async testing."""
+
+    def test_async_stream_conversion(self):
+        """Async stream conversion should produce same results as sync."""
+        chunks = [
+            _make_chunk({"role": "assistant", "content": "Hi"}),
+            _make_chunk({"content": " there"}),
+            _make_chunk({}, finish_reason="stop"),
+        ]
+
+        sync_events = list(
+            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
+        )
+
+        async def run_async():
+            async def async_chunks():
+                for c in chunks:
+                    yield c
+
+            return [
+                e
+                async for e in AnthropicToOpenAIConverter.aconvert_stream(
+                    async_chunks(), model="test"
+                )
+            ]
+
+        async_events = asyncio.get_event_loop().run_until_complete(run_async())
+        assert len(sync_events) == len(async_events)
+        for se, ae in zip(sync_events, async_events):
+            assert se["type"] == ae["type"]
+
+    def test_response_thinking_without_signature(self):
+        """Thinking block without signature should not include signature field."""
+        openai_resp = {
+            "id": "chatcmpl-1",
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "42",
+                        "thinking_blocks": [
+                            {"type": "thinking", "thinking": "Let me think..."}
+                        ],
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(openai_resp)
+        thinking = [b for b in result["content"] if b["type"] == "thinking"]
+        assert len(thinking) == 1
+        assert "signature" not in thinking[0]
+        assert thinking[0]["thinking"] == "Let me think..."
+
+    def test_response_thinking_with_signature(self):
+        """Thinking block with signature should include signature field."""
+        openai_resp = {
+            "id": "chatcmpl-1",
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "42",
+                        "thinking_blocks": [
+                            {
+                                "type": "thinking",
+                                "thinking": "Let me think...",
+                                "signature": "sig_abc",
+                            }
+                        ],
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(openai_resp)
+        thinking = [b for b in result["content"] if b["type"] == "thinking"]
+        assert thinking[0]["signature"] == "sig_abc"
+
+    def test_response_reasoning_content_no_signature(self):
+        """reasoning_content fallback should not include signature."""
+        openai_resp = {
+            "id": "chatcmpl-1",
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Answer",
+                        "reasoning_content": "Reasoning...",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(openai_resp)
+        thinking = [b for b in result["content"] if b["type"] == "thinking"]
+        assert len(thinking) == 1
+        assert "signature" not in thinking[0]
+
+    def test_request_cache_control_on_system_blocks(self):
+        """Cache control on system blocks should be preserved."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 100,
+            "system": [
+                {
+                    "type": "text",
+                    "text": "You are helpful.",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        system_msg = result["messages"][0]
+        assert system_msg["role"] == "system"
+        # Content should be list format to preserve cache_control
+        assert isinstance(system_msg["content"], list)
+        assert system_msg["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_request_assistant_cache_control_on_text(self):
+        """Cache control on assistant text blocks should be preserved."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [
+                {"role": "user", "content": "Hi"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Hello",
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                },
+                {"role": "user", "content": "How are you?"},
+            ],
+            "max_tokens": 100,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assistant_msg = [m for m in result["messages"] if m["role"] == "assistant"][0]
+        # Should use list format to preserve cache_control
+        assert isinstance(assistant_msg["content"], list)
+        assert assistant_msg["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_response_tool_invalid_json_arguments(self):
+        """Invalid JSON in tool arguments should result in empty input."""
+        openai_resp = {
+            "id": "chatcmpl-1",
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "search",
+                                    "arguments": "not valid json{",
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(openai_resp)
+        tool_use = [b for b in result["content"] if b["type"] == "tool_use"][0]
+        # Should fall back to empty dict when JSON is invalid
+        assert tool_use["input"] == {}
+
+    def test_stream_thinking_to_text_transition(self):
+        """Stream with thinking then text should properly close thinking block."""
+        chunks = [
+            _make_chunk({"role": "assistant"}),
+            _make_chunk(
+                {
+                    "thinking_blocks": [
+                        {"type": "thinking", "thinking": "Hmm..."}
+                    ]
+                }
+            ),
+            _make_chunk({"content": "The answer is 42."}),
+            _make_chunk({}, finish_reason="stop"),
+        ]
+        events = list(
+            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
+        )
+        event_types = [e["type"] for e in events]
+
+        # Should have: message_start, content_block_start(thinking),
+        # content_block_delta(thinking), content_block_stop,
+        # content_block_start(text), content_block_delta(text),
+        # content_block_stop, message_delta, message_stop
+        thinking_starts = [
+            e
+            for e in events
+            if e["type"] == "content_block_start"
+            and e.get("content_block", {}).get("type") == "thinking"
+        ]
+        text_starts = [
+            e
+            for e in events
+            if e["type"] == "content_block_start"
+            and e.get("content_block", {}).get("type") == "text"
+        ]
+        assert len(thinking_starts) == 1
+        assert len(text_starts) == 1
+
+        # Thinking block should be closed before text block starts
+        thinking_start_idx = events.index(thinking_starts[0])
+        text_start_idx = events.index(text_starts[0])
+        stops_between = [
+            e
+            for e in events[thinking_start_idx:text_start_idx]
+            if e["type"] == "content_block_stop"
+        ]
+        assert len(stops_between) == 1
+
+    def test_stream_tool_name_restoration(self):
+        """Stream should restore truncated tool names."""
+        long_name = "a" * 100
+        from openai_anthropic_converter.utils import truncate_tool_name
+
+        truncated = truncate_tool_name(long_name)
+        mapping = {truncated: long_name}
+
+        chunks = [
+            _make_chunk({"role": "assistant"}),
+            _make_chunk(
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": truncated, "arguments": ""},
+                        }
+                    ]
+                }
+            ),
+            _make_chunk(
+                {"tool_calls": [{"index": 0, "function": {"arguments": '{"x":1}'}}]}
+            ),
+            _make_chunk({}, finish_reason="tool_calls"),
+        ]
+        events = list(
+            AnthropicToOpenAIConverter.convert_stream(
+                chunks, model="test", tool_name_mapping=mapping
+            )
+        )
+        tool_starts = [
+            e
+            for e in events
+            if e["type"] == "content_block_start"
+            and e.get("content_block", {}).get("type") == "tool_use"
+        ]
+        assert len(tool_starts) == 1
+        assert tool_starts[0]["content_block"]["name"] == long_name
+
+    def test_response_no_choices(self):
+        """Response with empty choices should produce valid Anthropic response."""
+        openai_resp = {
+            "id": "chatcmpl-1",
+            "model": "test",
+            "choices": [],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 0, "total_tokens": 10},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(openai_resp)
+        assert result["type"] == "message"
+        assert result["content"] == []
+        assert result["stop_reason"] == "end_turn"
+
+    def test_request_thinking_disabled(self):
+        """Anthropic thinking type=disabled should not set reasoning_effort."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 100,
+            "thinking": {"type": "disabled"},
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assert "reasoning_effort" not in result
+
+    def test_request_thinking_adaptive(self):
+        """Anthropic thinking type=adaptive should map to reasoning_effort."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 100,
+            "thinking": {"type": "adaptive", "budget_tokens": 8000},
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assert result["reasoning_effort"] == "medium"
 
 
 def _make_chunk(delta, finish_reason=None):

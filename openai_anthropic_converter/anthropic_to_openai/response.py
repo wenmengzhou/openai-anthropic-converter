@@ -35,15 +35,14 @@ def convert_openai_content_to_anthropic(
             for tb in thinking_blocks:
                 tb_type = tb.get("type", "thinking")
                 if tb_type == "thinking":
-                    content.append(
-                        {
-                            "type": "thinking",
-                            "thinking": str(tb.get("thinking", "")),
-                            "signature": str(tb.get("signature", ""))
-                            if tb.get("signature")
-                            else None,
-                        }
-                    )
+                    thinking_block: Dict[str, Any] = {
+                        "type": "thinking",
+                        "thinking": str(tb.get("thinking", "")),
+                    }
+                    sig = tb.get("signature")
+                    if sig:
+                        thinking_block["signature"] = str(sig)
+                    content.append(thinking_block)
                 elif tb_type == "redacted_thinking":
                     content.append(
                         {
@@ -57,7 +56,6 @@ def convert_openai_content_to_anthropic(
                 {
                     "type": "thinking",
                     "thinking": str(message["reasoning_content"]),
-                    "signature": None,
                 }
             )
 

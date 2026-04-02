@@ -2,6 +2,7 @@
 Tests for OpenAI -> Anthropic conversion.
 """
 
+import asyncio
 import json
 
 from openai_anthropic_converter import OpenAIToAnthropicConverter
@@ -1625,3 +1626,212 @@ class TestEdgeCases:
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
         msgs = result["messages"]
         assert msgs[0]["role"] == "user"
+
+    def test_cache_control_preserved_on_tools(self):
+        """cache_control on tools should be preserved in Anthropic format."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search",
+                        "description": "Search",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["tools"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_cache_control_on_system_message(self):
+        """cache_control on system messages should be preserved."""
+        openai_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are helpful.",
+                    "cache_control": {"type": "ephemeral"},
+                },
+                {"role": "user", "content": "Hi"},
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["system"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_stop_sequences_string(self):
+        """String stop param should be converted to list."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stop": "END",
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["stop_sequences"] == ["END"]
+
+    def test_stop_sequences_empty_string_ignored(self):
+        """Empty or whitespace-only stop string should be ignored."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stop": "   ",
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert "stop_sequences" not in result
+
+    def test_response_with_citations(self):
+        """Anthropic response with citations should be in provider_specific_fields."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "model": "test",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "According to the docs...",
+                    "citations": [
+                        {
+                            "type": "document",
+                            "document_index": 0,
+                            "start_char_index": 0,
+                            "end_char_index": 50,
+                        }
+                    ],
+                }
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert "provider_specific_fields" in msg
+        assert "citations" in msg["provider_specific_fields"]
+
+    def test_response_web_search_results(self):
+        """Anthropic response with web_search_tool_result should be captured."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "model": "test",
+            "content": [
+                {
+                    "type": "web_search_tool_result",
+                    "tool_use_id": "ws_1",
+                    "content": [{"type": "web_search_result", "url": "https://example.com"}],
+                },
+                {"type": "text", "text": "Based on search..."},
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert "provider_specific_fields" in msg
+        assert "web_search_results" in msg["provider_specific_fields"]
+
+    def test_async_stream_conversion(self):
+        """Async stream conversion should produce same results as sync."""
+        events = [
+            {
+                "type": "message_start",
+                "message": {"id": "msg_1", "model": "test", "usage": {}},
+            },
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "Hello"},
+            },
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 5},
+            },
+            {"type": "message_stop"},
+        ]
+
+        # Sync result
+        sync_chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
+
+        # Async result
+        async def run_async():
+            async def async_events():
+                for e in events:
+                    yield e
+
+            return [c async for c in OpenAIToAnthropicConverter.aconvert_stream(async_events())]
+
+        async_chunks = asyncio.get_event_loop().run_until_complete(run_async())
+
+        # Should produce same number of chunks
+        assert len(sync_chunks) == len(async_chunks)
+        # Content should match
+        for sc, ac in zip(sync_chunks, async_chunks):
+            assert sc["choices"][0]["delta"] == ac["choices"][0]["delta"]
+
+    def test_tool_message_with_list_content(self):
+        """Tool message with list content should convert to tool_result with list."""
+        openai_req = {
+            "model": "test",
+            "messages": [
+                {"role": "user", "content": "Use the tool"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "search", "arguments": '{"q": "test"}'},
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "content": [
+                        {"type": "text", "text": "Result 1"},
+                        {"type": "text", "text": "Result 2"},
+                    ],
+                },
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        # Find tool_result message
+        tool_results = []
+        for msg in result["messages"]:
+            if isinstance(msg.get("content"), list):
+                for block in msg["content"]:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        tool_results.append(block)
+        assert len(tool_results) == 1
+        # Content should be the list
+        assert isinstance(tool_results[0]["content"], list)
+        assert len(tool_results[0]["content"]) == 2
+
+    def test_thinking_passthrough(self):
+        """thinking param in OpenAI request should pass through to Anthropic."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "thinking": {"type": "enabled", "budget_tokens": 8000},
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["thinking"] == {"type": "enabled", "budget_tokens": 8000}
+
+    def test_max_completion_tokens_used_as_max_tokens(self):
+        """max_completion_tokens should be used when max_tokens is not set."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_completion_tokens": 2048,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["max_tokens"] == 2048
