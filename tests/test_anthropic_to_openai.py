@@ -2781,6 +2781,109 @@ class TestRound10to12:
         assert text_blocks[0]["text"] == ""
 
 
+class TestRound13to14:
+    """Rounds 13-14: Bailian compat streaming tests."""
+
+    def test_stream_reasoning_content_to_thinking(self):
+        """[Bailian compat] reasoning_content in OpenAI chunk should become thinking_delta."""
+        chunks = [
+            _make_chunk({"role": "assistant", "content": ""}),
+            _make_chunk({"reasoning_content": "Let me think about this..."}),
+            _make_chunk({"content": "The answer is 42."}),
+            _make_chunk({}, finish_reason="stop"),
+        ]
+        events = list(
+            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
+        )
+        # Should have thinking block events
+        thinking_deltas = [
+            e for e in events
+            if e["type"] == "content_block_delta"
+            and e["delta"]["type"] == "thinking_delta"
+        ]
+        assert len(thinking_deltas) == 1
+        assert thinking_deltas[0]["delta"]["thinking"] == "Let me think about this..."
+
+        # Should also have text delta
+        text_deltas = [
+            e for e in events
+            if e["type"] == "content_block_delta"
+            and e["delta"]["type"] == "text_delta"
+        ]
+        assert len(text_deltas) == 1
+        assert text_deltas[0]["delta"]["text"] == "The answer is 42."
+
+    def test_stream_reasoning_content_empty_ignored(self):
+        """[Bailian compat] Empty reasoning_content should not produce thinking block."""
+        chunks = [
+            _make_chunk({"role": "assistant", "content": ""}),
+            _make_chunk({"reasoning_content": ""}),
+            _make_chunk({"content": "Hello"}),
+            _make_chunk({}, finish_reason="stop"),
+        ]
+        events = list(
+            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
+        )
+        thinking_deltas = [
+            e for e in events
+            if e["type"] == "content_block_delta"
+            and e["delta"].get("type") == "thinking_delta"
+        ]
+        assert len(thinking_deltas) == 0
+
+    def test_stream_reasoning_content_then_tool_call(self):
+        """[Bailian compat] reasoning_content followed by tool call should produce both blocks."""
+        chunks = [
+            _make_chunk({"role": "assistant", "content": ""}),
+            _make_chunk({"reasoning_content": "I should search for this."}),
+            _make_chunk({
+                "tool_calls": [{
+                    "index": 0,
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": ""},
+                }]
+            }),
+            _make_chunk({
+                "tool_calls": [{
+                    "index": 0,
+                    "function": {"arguments": '{"q":"test"}'},
+                }]
+            }),
+            _make_chunk({}, finish_reason="tool_calls"),
+        ]
+        events = list(
+            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
+        )
+        # Should have thinking block start/delta/stop and tool_use block start/delta/stop
+        block_starts = [e for e in events if e["type"] == "content_block_start"]
+        assert len(block_starts) == 2
+        assert block_starts[0]["content_block"]["type"] == "thinking"
+        assert block_starts[1]["content_block"]["type"] == "tool_use"
+
+    def test_stream_thinking_blocks_take_precedence_over_reasoning_content(self):
+        """thinking_blocks should take precedence over reasoning_content in same delta."""
+        chunks = [
+            _make_chunk({"role": "assistant", "content": ""}),
+            _make_chunk({
+                "reasoning_content": "should be ignored",
+                "thinking_blocks": [{"type": "thinking", "thinking": "real thinking"}],
+            }),
+            _make_chunk({"content": "done"}),
+            _make_chunk({}, finish_reason="stop"),
+        ]
+        events = list(
+            AnthropicToOpenAIConverter.convert_stream(chunks, model="test")
+        )
+        thinking_deltas = [
+            e for e in events
+            if e["type"] == "content_block_delta"
+            and e["delta"].get("type") == "thinking_delta"
+        ]
+        assert len(thinking_deltas) == 1
+        assert thinking_deltas[0]["delta"]["thinking"] == "real thinking"
+
+
 def _make_chunk(delta, finish_reason=None):
     """Helper to build an OpenAI streaming chunk."""
     return {

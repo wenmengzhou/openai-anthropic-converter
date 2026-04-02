@@ -139,6 +139,9 @@ class AnthropicSSEToOpenAIStream:
             if thinking:
                 return self._make_chunk(
                     delta={
+                        # [Bailian compat] reasoning_content in delta for
+                        # DashScope/Bailian clients that read this field
+                        "reasoning_content": thinking,
                         "thinking_blocks": [
                             {
                                 "type": "thinking",

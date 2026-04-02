@@ -619,6 +619,25 @@ def convert_request(
     if thinking:
         result["thinking"] = thinking
 
+    # [Bailian compat] enable_thinking/thinking_budget -> thinking
+    # DashScope/Bailian uses enable_thinking (bool) + thinking_budget (int)
+    # instead of OpenAI's reasoning_effort or Anthropic's thinking param.
+    enable_thinking = request.pop("enable_thinking", None)
+    thinking_budget = request.pop("thinking_budget", None)
+    if enable_thinking and "thinking" not in result:
+        budget = thinking_budget if isinstance(thinking_budget, int) else 10000
+        result["thinking"] = {"type": "enabled", "budget_tokens": budget}
+
+    # [Bailian compat] enable_search -> web_search tool
+    # DashScope/Bailian uses enable_search (bool) to activate internet search.
+    # Map to Anthropic's web_search server tool.
+    enable_search = request.pop("enable_search", None)
+    search_options = request.pop("search_options", None)
+    if enable_search:
+        tools_list = result.get("tools", [])
+        tools_list.append({"type": "web_search_20250305", "name": "web_search"})
+        result["tools"] = tools_list
+
     # user -> metadata.user_id
     user = request.pop("user", None)
     if user and isinstance(user, str):
@@ -641,5 +660,27 @@ def convert_request(
         val = request.pop(param, None)
         if val is not None:
             result[param] = val
+
+    # Silently drop OpenAI-only params that have no Anthropic equivalent
+    for param in (
+        "frequency_penalty",
+        "presence_penalty",
+        "seed",
+        "logprobs",
+        "top_logprobs",
+        "logit_bias",
+        "n",
+        "service_tier",
+        "store",
+        "stream_options",
+        "prediction",
+        "modalities",
+        "audio",
+        # [Bailian compat] DashScope-specific params with no Anthropic equiv
+        "repetition_penalty",
+        "result_format",
+        "incremental_output",
+    ):
+        request.pop(param, None)
 
     return result

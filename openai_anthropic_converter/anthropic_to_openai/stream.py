@@ -85,6 +85,12 @@ class OpenAIToAnthropicSSEStream:
         has_text = delta.get("content") is not None and delta.get("content") != ""
         has_tool_calls = bool(delta.get("tool_calls"))
         has_thinking = bool(delta.get("thinking_blocks"))
+        # [Bailian compat] DashScope sends reasoning_content in delta
+        has_reasoning = (
+            not has_thinking
+            and delta.get("reasoning_content") is not None
+            and delta.get("reasoning_content") != ""
+        )
 
         # Handle content type transitions
         if has_text:
@@ -162,6 +168,21 @@ class OpenAIToAnthropicSSEStream:
                             "delta": {"type": "signature_delta", "signature": signature},
                         }
                     )
+
+        elif has_reasoning:
+            # [Bailian compat] DashScope/Bailian sends reasoning_content in
+            # delta instead of thinking_blocks. Convert to thinking block.
+            events.extend(self._ensure_content_block("thinking"))
+            events.append(
+                {
+                    "type": "content_block_delta",
+                    "index": self.current_block_index,
+                    "delta": {
+                        "type": "thinking_delta",
+                        "thinking": delta["reasoning_content"],
+                    },
+                }
+            )
 
         # Handle finish
         if finish_reason:

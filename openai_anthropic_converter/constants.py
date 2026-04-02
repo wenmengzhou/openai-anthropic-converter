@@ -47,17 +47,20 @@ BUDGET_TOKENS_THRESHOLDS = [
 ]
 
 # Models that support native output_format (instead of tool-based JSON mode)
+# Includes Claude 4.5+ models with various naming conventions
 OUTPUT_FORMAT_SUPPORTED_MODEL_SUBSTRINGS = {
     "sonnet-4.5",
     "sonnet-4-5",
+    "sonnet-4.6",
+    "sonnet-4-6",
+    "sonnet_4.6",
+    "sonnet_4_6",
     "opus-4.1",
     "opus-4-1",
     "opus-4.5",
     "opus-4-5",
     "opus-4.6",
     "opus-4-6",
-    "sonnet-4.6",
-    "sonnet-4-6",
-    "sonnet_4.6",
-    "sonnet_4_6",
+    "haiku-4.5",
+    "haiku-4-5",
 }

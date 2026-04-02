@@ -2331,6 +2331,53 @@ class TestRound10to12:
         assert "First" in text_chunks
         assert "Second" in text_chunks
 
+    def test_stream_reasoning_content_bailian(self):
+        """[Bailian compat] reasoning_content in Anthropic thinking_delta should emit in OpenAI chunk."""
+        events = [
+            {
+                "type": "message_start",
+                "message": {"id": "msg_1", "model": "test", "usage": {}},
+            },
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "thinking_delta", "thinking": "Let me think..."},
+            },
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {"type": "text", "text": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {"type": "text_delta", "text": "Answer"},
+            },
+            {"type": "content_block_stop", "index": 1},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 10},
+            },
+            {"type": "message_stop"},
+        ]
+        chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
+        # Check that thinking chunk has reasoning_content for Bailian compat
+        thinking_chunks = [
+            c for c in chunks
+            if c["choices"][0]["delta"].get("reasoning_content")
+        ]
+        assert len(thinking_chunks) >= 1
+        assert thinking_chunks[0]["choices"][0]["delta"]["reasoning_content"] == "Let me think..."
+        # Also should have thinking_blocks
+        assert thinking_chunks[0]["choices"][0]["delta"]["thinking_blocks"][0]["thinking"] == "Let me think..."
+
     def test_stream_tool_use_then_text(self):
         """Stream with tool_use then text (unusual but possible in multi-turn)."""
         events = [
@@ -2385,3 +2432,147 @@ class TestRound10to12:
         ]
         assert len(tool_chunks) >= 1
         assert len(text_chunks) >= 1
+
+
+class TestRound13to14:
+    """Rounds 13-14: Bailian compat and OpenAI-only param dropping."""
+
+    def test_request_bailian_enable_thinking(self):
+        """[Bailian compat] enable_thinking + thinking_budget should map to Anthropic thinking."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "enable_thinking": True,
+            "thinking_budget": 5000,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["thinking"]["type"] == "enabled"
+        assert result["thinking"]["budget_tokens"] == 5000
+        # Should not leak Bailian params
+        assert "enable_thinking" not in result
+        assert "thinking_budget" not in result
+
+    def test_request_bailian_enable_thinking_default_budget(self):
+        """[Bailian compat] enable_thinking without budget should use default 10000."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "enable_thinking": True,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["thinking"]["type"] == "enabled"
+        assert result["thinking"]["budget_tokens"] == 10000
+
+    def test_request_bailian_enable_thinking_false(self):
+        """[Bailian compat] enable_thinking=False should not add thinking."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "enable_thinking": False,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert "thinking" not in result
+
+    def test_request_bailian_enable_thinking_no_override(self):
+        """[Bailian compat] enable_thinking should not override reasoning_effort thinking."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning_effort": "high",
+            "enable_thinking": True,
+            "thinking_budget": 3000,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        # reasoning_effort sets thinking first; enable_thinking should not override
+        assert result["thinking"]["type"] == "enabled"
+        assert result["thinking"]["budget_tokens"] == 10000  # from reasoning_effort=high
+
+    def test_request_bailian_enable_search(self):
+        """[Bailian compat] enable_search should add web_search tool."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "What's the weather?"}],
+            "enable_search": True,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        tools = result.get("tools", [])
+        web_search = [t for t in tools if t.get("type") == "web_search_20250305"]
+        assert len(web_search) == 1
+        assert web_search[0]["name"] == "web_search"
+        assert "enable_search" not in result
+
+    def test_request_bailian_enable_search_false(self):
+        """[Bailian compat] enable_search=False should not add web_search tool."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "enable_search": False,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        tools = result.get("tools", [])
+        web_search = [t for t in tools if t.get("type") == "web_search_20250305"]
+        assert len(web_search) == 0
+
+    def test_request_openai_only_params_dropped(self):
+        """OpenAI-only params should be silently dropped."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "frequency_penalty": 0.5,
+            "presence_penalty": 0.3,
+            "seed": 42,
+            "logprobs": True,
+            "top_logprobs": 5,
+            "logit_bias": {"123": 10},
+            "n": 2,
+            "service_tier": "auto",
+            "store": True,
+            "stream_options": {"include_usage": True},
+            "prediction": {"type": "content", "content": "x"},
+            "modalities": ["text"],
+            "audio": {"voice": "alloy"},
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        for param in [
+            "frequency_penalty", "presence_penalty", "seed", "logprobs",
+            "top_logprobs", "logit_bias", "n", "service_tier", "store",
+            "stream_options", "prediction", "modalities", "audio",
+        ]:
+            assert param not in result, f"{param} should be dropped"
+
+    def test_request_bailian_params_dropped(self):
+        """Bailian-specific params with no Anthropic equivalent should be dropped."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "repetition_penalty": 1.1,
+            "result_format": "message",
+            "incremental_output": True,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        for param in ["repetition_penalty", "result_format", "incremental_output"]:
+            assert param not in result, f"{param} should be dropped"
+
+    def test_request_enable_search_with_existing_tools(self):
+        """[Bailian compat] enable_search should append to existing tools."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "my_func",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            "enable_search": True,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        tools = result.get("tools", [])
+        # Should have both the original tool and web_search
+        assert len(tools) == 2
+        names = [t.get("name") for t in tools]
+        assert "my_func" in names
+        assert "web_search" in names
