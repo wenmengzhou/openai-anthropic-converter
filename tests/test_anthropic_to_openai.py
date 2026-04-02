@@ -1850,7 +1850,7 @@ class TestRound4EdgeCases:
         assert assistant_msgs[0]["tool_calls"][0]["function"]["name"] == "my_mcp_tool"
 
     def test_tool_result_empty_list_content(self):
-        """tool_result with empty list content should handle gracefully."""
+        """tool_result with empty list content should return empty string."""
         anthropic_req = {
             "model": "test",
             "messages": [
@@ -1871,7 +1871,7 @@ class TestRound4EdgeCases:
         tool_msgs = [m for m in result["messages"] if m["role"] == "tool"]
         assert len(tool_msgs) == 1
         # Empty list stringified
-        assert tool_msgs[0]["content"] == "[]"
+        assert tool_msgs[0]["content"] == ""
 
     def test_response_usage_no_cache_fields(self):
         """Usage without cache fields should not include cache keys."""

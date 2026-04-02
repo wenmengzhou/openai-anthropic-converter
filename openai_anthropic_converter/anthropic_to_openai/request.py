@@ -114,6 +114,8 @@ def _convert_tool_result(block: Dict[str, Any]) -> Dict[str, Any]:
         return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
 
     if isinstance(content, list):
+        if len(content) == 0:
+            return {"role": "tool", "tool_call_id": tool_call_id, "content": ""}
         if len(content) == 1:
             item = content[0]
             if isinstance(item, str):

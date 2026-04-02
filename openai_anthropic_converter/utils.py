@@ -2,6 +2,7 @@
 Shared utilities for protocol conversion.
 """
 
+import copy
 import hashlib
 import json
 from typing import Any, Dict, List, Optional
@@ -90,7 +91,7 @@ def filter_schema_for_anthropic(schema: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     constraint_descriptions = []
-    for field in unsupported_fields:
+    for field in sorted(unsupported_fields):
         if field in schema:
             constraint_descriptions.append(constraint_labels[field].format(schema[field]))
 
@@ -152,7 +153,9 @@ def unpack_defs(
                 # Circular reference — stop expanding to avoid infinite recursion
                 return
             _expanding.add(ref_name)
-            schema.update(defs[ref_name])
+            # Deep copy to prevent mutation of defs when processing
+            # nested $refs in the expanded content
+            schema.update(copy.deepcopy(defs[ref_name]))
 
     for key, value in list(schema.items()):
         if isinstance(value, dict):

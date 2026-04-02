@@ -1855,3 +1855,171 @@ class TestEdgeCases:
         # Both blocks should be forced to type "text" for Anthropic system
         assert all(b["type"] == "text" for b in result["system"])
         assert len(result["system"]) == 2
+
+    def test_circular_ref_used_in_multiple_places(self):
+        """Circular $ref used in two properties should expand correctly in both."""
+        openai_req = {
+            "model": "claude-sonnet-4-5-20250514",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "graph",
+                    "schema": {
+                        "type": "object",
+                        "$defs": {
+                            "Node": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "children": {
+                                        "type": "array",
+                                        "items": {"$ref": "#/$defs/Node"},
+                                    },
+                                },
+                            }
+                        },
+                        "properties": {
+                            "source": {"$ref": "#/$defs/Node"},
+                            "sink": {"$ref": "#/$defs/Node"},
+                        },
+                    },
+                },
+            },
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        schema = result["output_format"]["schema"]
+        # Both refs should be fully expanded
+        assert schema["properties"]["source"]["type"] == "object"
+        assert schema["properties"]["sink"]["type"] == "object"
+        # Both should have the "name" property
+        assert "name" in schema["properties"]["source"]["properties"]
+        assert "name" in schema["properties"]["sink"]["properties"]
+        # Both should have "children" property with items
+        assert "children" in schema["properties"]["source"]["properties"]
+        assert "children" in schema["properties"]["sink"]["properties"]
+
+    def test_filter_schema_constraint_descriptions_deterministic(self):
+        """Schema filter constraint descriptions should be deterministic."""
+        from openai_anthropic_converter.utils import filter_schema_for_anthropic
+
+        schema = {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "A score",
+        }
+        result1 = filter_schema_for_anthropic(schema)
+        result2 = filter_schema_for_anthropic(schema)
+        # Description should be identical across calls
+        assert result1["description"] == result2["description"]
+        assert "minimum" not in result1
+        assert "maximum" not in result1
+
+    def test_filter_schema_adds_additional_properties_false(self):
+        """Object schemas should get additionalProperties=false for Anthropic."""
+        from openai_anthropic_converter.utils import filter_schema_for_anthropic
+
+        schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+        }
+        result = filter_schema_for_anthropic(schema)
+        assert result["additionalProperties"] is False
+
+    def test_filter_schema_preserves_existing_additional_properties(self):
+        """Existing additionalProperties should not be overwritten."""
+        from openai_anthropic_converter.utils import filter_schema_for_anthropic
+
+        schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "additionalProperties": True,
+        }
+        result = filter_schema_for_anthropic(schema)
+        assert result["additionalProperties"] is True
+
+    def test_filter_schema_anyof_recursion(self):
+        """anyOf schemas should be recursively filtered."""
+        from openai_anthropic_converter.utils import filter_schema_for_anthropic
+
+        schema = {
+            "anyOf": [
+                {"type": "string", "minLength": 1, "maxLength": 100},
+                {"type": "integer", "minimum": 0},
+            ]
+        }
+        result = filter_schema_for_anthropic(schema)
+        # Constraints should be removed from inner schemas
+        assert "minLength" not in result["anyOf"][0]
+        assert "maxLength" not in result["anyOf"][0]
+        assert "minimum" not in result["anyOf"][1]
+        # But constraint notes should be in descriptions
+        assert "description" in result["anyOf"][0]
+        assert "description" in result["anyOf"][1]
+
+    def test_response_server_tool_use_converted(self):
+        """Anthropic server_tool_use blocks should convert to OpenAI tool_calls."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "model": "test",
+            "content": [
+                {
+                    "type": "server_tool_use",
+                    "id": "srvtu_1",
+                    "name": "web_search",
+                    "input": {"query": "test"},
+                },
+                {"type": "text", "text": "Found results."},
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert msg["content"] == "Found results."
+        assert len(msg["tool_calls"]) == 1
+        assert msg["tool_calls"][0]["function"]["name"] == "web_search"
+
+    def test_response_mcp_tool_use_converted(self):
+        """Anthropic mcp_tool_use blocks should convert to OpenAI tool_calls."""
+        anthropic_resp = {
+            "id": "msg_1",
+            "model": "test",
+            "content": [
+                {
+                    "type": "mcp_tool_use",
+                    "id": "mcptu_1",
+                    "name": "remote_tool",
+                    "input": {"key": "value"},
+                },
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert msg["content"] is None
+        assert len(msg["tool_calls"]) == 1
+        assert msg["tool_calls"][0]["function"]["name"] == "remote_tool"
+        assert result["choices"][0]["finish_reason"] == "tool_calls"
+
+    def test_user_content_passthrough_unknown_types(self):
+        """Unknown content types in user messages should pass through."""
+        openai_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Hello"},
+                        {"type": "audio", "data": "base64audio"},
+                    ],
+                }
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        user_content = result["messages"][0]["content"]
+        # Unknown types should be passed through
+        audio_blocks = [b for b in user_content if b.get("type") == "audio"]
+        assert len(audio_blocks) == 1
