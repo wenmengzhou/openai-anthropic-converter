@@ -15,6 +15,7 @@ OPENAI_EXAMPLES = {
             {"role": "user", "content": "Hello! What's 2+2?"}
         ],
         "max_tokens": 256,
+        "stream": True,
     },
     "System + Multi-turn": {
         "model": "__MODEL__",
@@ -126,6 +127,7 @@ ANTHROPIC_EXAMPLES = {
             {"role": "user", "content": "Hello! What's 2+2?"}
         ],
         "max_tokens": 256,
+        "stream": True,
     },
     "System Prompt": {
         "model": "__MODEL__",
