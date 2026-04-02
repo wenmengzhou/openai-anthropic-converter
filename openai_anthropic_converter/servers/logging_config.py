@@ -9,6 +9,7 @@ Sets up logging with:
 
 import logging
 import os
+import sys
 from logging.handlers import RotatingFileHandler
 
 LOG_FORMAT = "%(asctime)s %(levelname)-8s %(filename)s:%(lineno)d - %(message)s"
@@ -41,7 +42,7 @@ def setup_logging(
     formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
 
     # Console handler → stdout
-    console_handler = logging.StreamHandler()
+    console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
 
