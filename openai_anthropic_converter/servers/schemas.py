@@ -12,7 +12,8 @@ These models are the documented contract, not the validation layer —
 extra fields are allowed and passed through to the converters.
 """
 
-from typing import Any, Dict, List, Literal, Optional, Union  # noqa: I001
+from typing import Any, Dict, List, Literal, Optional, Union
+
 from pydantic import BaseModel, Field
 
 
@@ -182,11 +183,14 @@ class OpenAIChatCompletionRequest(BaseModel):
         description="Direct Anthropic thinking parameter passthrough. "
         "Example: {type: 'enabled', budget_tokens: 10000}",
     )
-    user: Optional[str] = Field(None, description="End-user ID. Maps to Anthropic metadata.user_id")
+    user: Optional[str] = Field(
+        None, description="End-user ID. Maps to Anthropic metadata.user_id"
+    )
     # [Bailian compat]
     enable_thinking: Optional[bool] = Field(
         None,
-        description="[Bailian/DashScope] Enable thinking mode. Maps to Anthropic thinking param",
+        description="[Bailian/DashScope] Enable thinking mode. "
+        "Maps to Anthropic thinking param",
     )
     thinking_budget: Optional[int] = Field(
         None,
@@ -194,7 +198,8 @@ class OpenAIChatCompletionRequest(BaseModel):
     )
     enable_search: Optional[bool] = Field(
         None,
-        description="[Bailian/DashScope] Enable web search. Maps to Anthropic web_search tool",
+        description="[Bailian/DashScope] Enable web search. "
+        "Maps to Anthropic web_search tool",
     )
     stream_options: Optional[OpenAIStreamOptionsSchema] = Field(
         None, description="Stream options (dropped — Anthropic handles usage differently)"
@@ -368,14 +373,20 @@ class AnthropicToolDefSchema(BaseModel):
 
 
 class AnthropicToolChoiceSchema(BaseModel):
-    type: str = Field(..., description="Tool choice type: 'auto', 'any', 'tool', or 'none'")
+    type: str = Field(
+        ..., description="Tool choice type: 'auto', 'any', 'tool', or 'none'"
+    )
     name: Optional[str] = Field(None, description="Specific tool name (when type='tool')")
     disable_parallel_tool_use: Optional[bool] = None
 
 
 class AnthropicThinkingParamSchema(BaseModel):
-    type: str = Field(..., description="'enabled', 'disabled', or 'adaptive'")
-    budget_tokens: Optional[int] = Field(None, description="Max tokens for thinking/reasoning")
+    type: str = Field(
+        ..., description="'enabled', 'disabled', or 'adaptive'"
+    )
+    budget_tokens: Optional[int] = Field(
+        None, description="Max tokens for thinking/reasoning"
+    )
 
 
 class AnthropicMetadataSchema(BaseModel):
@@ -516,7 +527,9 @@ class AnthropicCountTokensRequest(BaseModel):
     """Token counting request. Same shape as Messages request."""
 
     model: str = Field(..., description="Model ID")
-    messages: List[AnthropicMessageSchema] = Field(..., description="Messages to count")
+    messages: List[AnthropicMessageSchema] = Field(
+        ..., description="Messages to count"
+    )
     system: Optional[Union[str, List[AnthropicSystemContentBlockSchema]]] = None
     tools: Optional[List[AnthropicToolDefSchema]] = None
     thinking: Optional[AnthropicThinkingParamSchema] = None

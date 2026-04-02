@@ -27,7 +27,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, AsyncIterator, Dict
+from typing import Any, AsyncIterator, Dict, Union
 
 try:
     from dotenv import load_dotenv
@@ -75,7 +75,6 @@ def _custom_openapi():
 
     app.openapi_schema = schema
     return schema
-
 
 logger = logging.getLogger("openai_server")
 
@@ -129,7 +128,10 @@ async def list_models():
     """List available models. Returns the configured model list."""
     return {
         "object": "list",
-        "data": [{"id": m, "object": "model", "owned_by": "system"} for m in _config["models"]],
+        "data": [
+            {"id": m, "object": "model", "owned_by": "system"}
+            for m in _config["models"]
+        ],
     }
 
 
@@ -190,7 +192,7 @@ async def debug_playground():
                     }
                 },
                 "text/event-stream": {
-                    "example": 'data: {"id":"chatcmpl-abc123","choices":[{"delta":{"content":"Hello"},"index":0}]}\n\ndata: [DONE]\n\n'
+                    "example": "data: {\"id\":\"chatcmpl-abc123\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"index\":0}]}\n\ndata: [DONE]\n\n"
                 },
             },
         },
@@ -477,11 +479,9 @@ def main():
 
     backend_url = _normalize_anthropic_url(args.backend_url)
 
-    models = (
-        [m.strip() for m in args.models.split(",") if m.strip()]
-        if args.models
-        else ["claude-sonnet-4-20250514", "claude-opus-4-20250514"]
-    )
+    models = [m.strip() for m in args.models.split(",") if m.strip()] if args.models else [
+        "claude-sonnet-4-20250514", "claude-opus-4-20250514"
+    ]
 
     configure(
         backend_url=backend_url,

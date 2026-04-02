@@ -11,7 +11,9 @@ Serves a self-contained HTML page at /debug with:
 OPENAI_EXAMPLES = {
     "Basic Chat": {
         "model": "__MODEL__",
-        "messages": [{"role": "user", "content": "Hello! What's 2+2?"}],
+        "messages": [
+            {"role": "user", "content": "Hello! What's 2+2?"}
+        ],
         "max_tokens": 256,
         "stream": True,
     },
@@ -27,7 +29,9 @@ OPENAI_EXAMPLES = {
     },
     "Tool Use": {
         "model": "__MODEL__",
-        "messages": [{"role": "user", "content": "What's the weather in Tokyo?"}],
+        "messages": [
+            {"role": "user", "content": "What's the weather in Tokyo?"}
+        ],
         "max_tokens": 1024,
         "tools": [
             {
@@ -83,19 +87,25 @@ OPENAI_EXAMPLES = {
     },
     "Streaming": {
         "model": "__MODEL__",
-        "messages": [{"role": "user", "content": "Write a haiku about programming."}],
+        "messages": [
+            {"role": "user", "content": "Write a haiku about programming."}
+        ],
         "max_tokens": 256,
         "stream": True,
     },
     "Extended Thinking": {
         "model": "__MODEL__",
-        "messages": [{"role": "user", "content": "What is 127 * 389? Think step by step."}],
+        "messages": [
+            {"role": "user", "content": "What is 127 * 389? Think step by step."}
+        ],
         "max_tokens": 4096,
         "reasoning_effort": "high",
     },
     "[Bailian] Thinking + Search": {
         "model": "__MODEL__",
-        "messages": [{"role": "user", "content": "What happened in tech news today?"}],
+        "messages": [
+            {"role": "user", "content": "What happened in tech news today?"}
+        ],
         "max_tokens": 2048,
         "enable_thinking": True,
         "thinking_budget": 5000,
@@ -113,14 +123,18 @@ OPENAI_EXAMPLES = {
 ANTHROPIC_EXAMPLES = {
     "Basic Message": {
         "model": "__MODEL__",
-        "messages": [{"role": "user", "content": "Hello! What's 2+2?"}],
+        "messages": [
+            {"role": "user", "content": "Hello! What's 2+2?"}
+        ],
         "max_tokens": 256,
         "stream": True,
     },
     "System Prompt": {
         "model": "__MODEL__",
         "system": "You are a helpful math tutor. Be concise.",
-        "messages": [{"role": "user", "content": "What is the derivative of x^2?"}],
+        "messages": [
+            {"role": "user", "content": "What is the derivative of x^2?"}
+        ],
         "max_tokens": 256,
     },
     "Multi-modal (Image URL)": {
@@ -144,7 +158,9 @@ ANTHROPIC_EXAMPLES = {
     },
     "Tool Use": {
         "model": "__MODEL__",
-        "messages": [{"role": "user", "content": "What's the weather in Tokyo?"}],
+        "messages": [
+            {"role": "user", "content": "What's the weather in Tokyo?"}
+        ],
         "max_tokens": 1024,
         "tools": [
             {
@@ -162,19 +178,25 @@ ANTHROPIC_EXAMPLES = {
     },
     "Extended Thinking": {
         "model": "__MODEL__",
-        "messages": [{"role": "user", "content": "What is 127 * 389? Think step by step."}],
+        "messages": [
+            {"role": "user", "content": "What is 127 * 389? Think step by step."}
+        ],
         "max_tokens": 4096,
         "thinking": {"type": "enabled", "budget_tokens": 10000},
     },
     "Streaming": {
         "model": "__MODEL__",
-        "messages": [{"role": "user", "content": "Write a haiku about programming."}],
+        "messages": [
+            {"role": "user", "content": "Write a haiku about programming."}
+        ],
         "max_tokens": 256,
         "stream": True,
     },
     "Count Tokens": {
         "model": "__MODEL__",
-        "messages": [{"role": "user", "content": "Hello, how are you?"}],
+        "messages": [
+            {"role": "user", "content": "Hello, how are you?"}
+        ],
     },
 }
 
@@ -195,23 +217,22 @@ def get_debug_html(server_type: str, models: list[str] | None = None) -> str:
     if server_type == "openai":
         title = "OpenAI-Compatible Server Debug Playground"
         examples = OPENAI_EXAMPLES
-        endpoints_js = json.dumps(
-            [
-                {"path": "/v1/chat/completions", "method": "POST", "label": "Chat Completions"},
-                {"path": "/v1/models", "method": "GET", "label": "List Models"},
-                {"path": "/health", "method": "GET", "label": "Health Check"},
-            ]
-        )
+        endpoints_js = json.dumps([
+            {"path": "/v1/chat/completions", "method": "POST", "label": "Chat Completions"},
+            {"path": "/v1/models", "method": "GET", "label": "List Models"},
+            {"path": "/health", "method": "GET", "label": "Health Check"},
+        ])
+        default_endpoint = "/v1/chat/completions"
     else:
         title = "Anthropic-Compatible Server Debug Playground"
         examples = ANTHROPIC_EXAMPLES
-        endpoints_js = json.dumps(
-            [
-                {"path": "/v1/messages", "method": "POST", "label": "Messages"},
-                {"path": "/v1/messages/count_tokens", "method": "POST", "label": "Count Tokens"},
-                {"path": "/health", "method": "GET", "label": "Health Check"},
-            ]
-        )
+        endpoints_js = json.dumps([
+            {"path": "/v1/messages", "method": "POST", "label": "Messages"},
+            {"path": "/v1/messages/count_tokens", "method": "POST", "label": "Count Tokens"},
+            {"path": "/health", "method": "GET", "label": "Health Check"},
+        ])
+        default_endpoint = "/v1/messages"
+
     examples_js = json.dumps(examples, indent=2)
     models_js = json.dumps(models)
 

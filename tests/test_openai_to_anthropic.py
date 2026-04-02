@@ -660,7 +660,7 @@ class TestEdgeCases:
         assert tool["name"] == "get_time"
         assert tool["input_schema"]["type"] == "object"
 
-    def test_context_management_compaction(self):
+    def test_context_management_conversion(self):
         openai_req = {
             "model": "claude-sonnet-4-20250514",
             "messages": [{"role": "user", "content": "Hi"}],
@@ -1080,7 +1080,7 @@ class TestEdgeCases:
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
         assert result["tools"][0]["cache_control"] == {"type": "ephemeral"}
 
-    def test_thinking_param_passthrough(self):
+    def test_thinking_passthrough(self):
         """Thinking param should pass through when directly specified."""
         openai_req = {
             "model": "claude-sonnet-4-20250514",
@@ -1487,7 +1487,9 @@ class TestEdgeCases:
         openai_req = {
             "model": "test",
             "messages": [{"role": "user", "content": "Hi"}],
-            "context_management": [{"type": "compaction", "compact_threshold": 200000}],
+            "context_management": [
+                {"type": "compaction", "compact_threshold": 200000}
+            ],
         }
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
         assert "context_management" in result
@@ -2095,7 +2097,9 @@ class TestRound10to12:
                     "content": [
                         {
                             "type": "image_url",
-                            "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+                            "image_url": {
+                                "url": "data:image/png;base64,iVBORw0KGgo="
+                            },
                         }
                     ],
                 }
@@ -2178,7 +2182,7 @@ class TestRound10to12:
         roles = [m["role"] for m in msgs]
         # Should alternate correctly
         for i in range(1, len(roles)):
-            assert roles[i] != roles[i - 1], f"Roles at {i - 1} and {i} are both {roles[i]}"
+            assert roles[i] != roles[i - 1], f"Roles at {i-1} and {i} are both {roles[i]}"
         # Tool result should be in a user message
         tool_results = []
         for msg in msgs:
@@ -2365,14 +2369,14 @@ class TestRound10to12:
         ]
         chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
         # Check that thinking chunk has reasoning_content for Bailian compat
-        thinking_chunks = [c for c in chunks if c["choices"][0]["delta"].get("reasoning_content")]
+        thinking_chunks = [
+            c for c in chunks
+            if c["choices"][0]["delta"].get("reasoning_content")
+        ]
         assert len(thinking_chunks) >= 1
         assert thinking_chunks[0]["choices"][0]["delta"]["reasoning_content"] == "Let me think..."
         # Also should have thinking_blocks
-        assert (
-            thinking_chunks[0]["choices"][0]["delta"]["thinking_blocks"][0]["thinking"]
-            == "Let me think..."
-        )
+        assert thinking_chunks[0]["choices"][0]["delta"]["thinking_blocks"][0]["thinking"] == "Let me think..."
 
     def test_stream_tool_use_then_text(self):
         """Stream with tool_use then text (unusual but possible in multi-turn)."""
@@ -2416,8 +2420,16 @@ class TestRound10to12:
         ]
         chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
         # Should have tool call chunks and text chunks
-        tool_chunks = [c for c in chunks if c["choices"][0]["delta"].get("tool_calls")]
-        text_chunks = [c for c in chunks if c["choices"][0]["delta"].get("content")]
+        tool_chunks = [
+            c
+            for c in chunks
+            if c["choices"][0]["delta"].get("tool_calls")
+        ]
+        text_chunks = [
+            c
+            for c in chunks
+            if c["choices"][0]["delta"].get("content")
+        ]
         assert len(tool_chunks) >= 1
         assert len(text_chunks) >= 1
 
@@ -2522,19 +2534,9 @@ class TestRound13to14:
         }
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
         for param in [
-            "frequency_penalty",
-            "presence_penalty",
-            "seed",
-            "logprobs",
-            "top_logprobs",
-            "logit_bias",
-            "n",
-            "service_tier",
-            "store",
-            "stream_options",
-            "prediction",
-            "modalities",
-            "audio",
+            "frequency_penalty", "presence_penalty", "seed", "logprobs",
+            "top_logprobs", "logit_bias", "n", "service_tier", "store",
+            "stream_options", "prediction", "modalities", "audio",
         ]:
             assert param not in result, f"{param} should be dropped"
 
