@@ -15,7 +15,7 @@ LOG_FORMAT = "%(asctime)s %(levelname)-8s %(filename)s:%(lineno)d - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 DEFAULT_LOG_DIR = "logs"
-DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+DEFAULT_MAX_BYTES = 100 * 1024 * 1024  # 100 MB
 DEFAULT_BACKUP_COUNT = 5
 
 
