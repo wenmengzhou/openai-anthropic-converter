@@ -235,6 +235,12 @@ async def messages(request: Request):
         )
 
     is_stream = anthropic_request.get("stream", False)
+    logger.info(
+        "Incoming request: model=%s stream=%s messages=%d",
+        anthropic_request.get("model", "?"),
+        is_stream,
+        len(anthropic_request.get("messages", [])),
+    )
 
     # Convert Anthropic request -> OpenAI request
     try:
@@ -250,6 +256,11 @@ async def messages(request: Request):
     if is_stream:
         # Request usage in streaming mode so we can include it in message_delta
         openai_request["stream_options"] = {"include_usage": True}
+
+    logger.debug(
+        "Converted request -> OpenAI:\n%s",
+        json.dumps(openai_request, indent=2, ensure_ascii=False),
+    )
 
     # Build headers for OpenAI API
     headers = {
@@ -290,14 +301,30 @@ async def _non_stream_response(
             return _anthropic_error(502, "api_error", f"Backend connection error: {e}")
 
     if resp.status_code != 200:
-        logger.error("Backend error %d: %s", resp.status_code, resp.text[:500])
+        body = resp.text
+        logger.error(
+            "Backend (OpenAI) error %d:\n"
+            "  URL: %s\n"
+            "  Response headers: %s\n"
+            "  Response body: %s",
+            resp.status_code,
+            _config["backend_url"],
+            dict(resp.headers),
+            body[:2000],
+        )
         error_type = _map_status_to_error_type(resp.status_code)
-        return _anthropic_error(resp.status_code, error_type, resp.text[:500])
+        return _anthropic_error(resp.status_code, error_type, body[:500])
 
     try:
         openai_response = resp.json()
     except Exception:
+        logger.error("Invalid JSON from backend: %s", resp.text[:500])
         return _anthropic_error(502, "api_error", "Invalid JSON from backend")
+
+    logger.debug(
+        "Backend (OpenAI) response:\n%s",
+        json.dumps(openai_response, indent=2, ensure_ascii=False)[:3000],
+    )
 
     # Convert OpenAI response -> Anthropic response
     try:
@@ -306,7 +333,11 @@ async def _non_stream_response(
             tool_name_mapping=tool_name_mapping,
         )
     except Exception as e:
-        logger.error("Response conversion failed: %s", e)
+        logger.error(
+            "Response conversion failed: %s\n  Original OpenAI response: %s",
+            e,
+            json.dumps(openai_response, ensure_ascii=False)[:1000],
+        )
         return _anthropic_error(502, "api_error", f"Response conversion error: {e}")
 
     return JSONResponse(content=anthropic_response)
@@ -328,11 +359,22 @@ async def _stream_response(
             ) as resp:
                 if resp.status_code != 200:
                     body = await resp.aread()
+                    body_str = body.decode(errors="replace")
+                    logger.error(
+                        "Backend (OpenAI) stream error %d:\n"
+                        "  URL: %s\n"
+                        "  Response headers: %s\n"
+                        "  Response body: %s",
+                        resp.status_code,
+                        _config["backend_url"],
+                        dict(resp.headers),
+                        body_str[:2000],
+                    )
                     error_event = {
                         "type": "error",
                         "error": {
                             "type": _map_status_to_error_type(resp.status_code),
-                            "message": body.decode()[:500],
+                            "message": body_str[:500],
                         },
                     }
                     yield f"event: error\ndata: {json.dumps(error_event)}\n\n"

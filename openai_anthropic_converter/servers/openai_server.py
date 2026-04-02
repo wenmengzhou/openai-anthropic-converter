@@ -224,6 +224,12 @@ async def chat_completions(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     is_stream = openai_request.get("stream", False)
+    logger.info(
+        "Incoming request: model=%s stream=%s messages=%d",
+        openai_request.get("model", "?"),
+        is_stream,
+        len(openai_request.get("messages", [])),
+    )
 
     # Convert OpenAI request -> Anthropic request
     try:
@@ -238,10 +244,18 @@ async def chat_completions(request: Request):
     # Set stream flag for Anthropic
     anthropic_request["stream"] = is_stream
 
+    logger.debug(
+        "Converted request -> Anthropic:\n%s",
+        json.dumps(anthropic_request, indent=2, ensure_ascii=False),
+    )
+
     # Build headers for Anthropic API
+    # Send both x-api-key (standard Anthropic) and Authorization Bearer
+    # (DashScope/Bailian Anthropic-native) for broad compatibility
     headers = {
         "Content-Type": "application/json",
         "x-api-key": _config["backend_api_key"],
+        "Authorization": f"Bearer {_config['backend_api_key']}",
         "anthropic-version": _config["anthropic_version"],
     }
 
@@ -277,22 +291,42 @@ async def _non_stream_response(
             raise HTTPException(status_code=502, detail=f"Backend connection error: {e}")
 
     if resp.status_code != 200:
-        logger.error("Backend error %d: %s", resp.status_code, resp.text[:500])
+        body = resp.text
+        logger.error(
+            "Backend (Anthropic) error %d:\n"
+            "  URL: %s\n"
+            "  Response headers: %s\n"
+            "  Response body: %s",
+            resp.status_code,
+            _config["backend_url"],
+            dict(resp.headers),
+            body[:2000],
+        )
         raise HTTPException(
             status_code=resp.status_code,
-            detail=f"Backend error: {resp.text[:500]}",
+            detail=f"Backend error: {body[:500]}",
         )
 
     try:
         anthropic_response = resp.json()
     except Exception:
+        logger.error("Invalid JSON from backend: %s", resp.text[:500])
         raise HTTPException(status_code=502, detail="Invalid JSON from backend")
+
+    logger.debug(
+        "Backend (Anthropic) response:\n%s",
+        json.dumps(anthropic_response, indent=2, ensure_ascii=False)[:3000],
+    )
 
     # Convert Anthropic response -> OpenAI response
     try:
         openai_response = OpenAIToAnthropicConverter.convert_response(anthropic_response)
     except Exception as e:
-        logger.error("Response conversion failed: %s", e)
+        logger.error(
+            "Response conversion failed: %s\n  Original Anthropic response: %s",
+            e,
+            json.dumps(anthropic_response, ensure_ascii=False)[:1000],
+        )
         raise HTTPException(status_code=502, detail=f"Response conversion error: {e}")
 
     return JSONResponse(content=openai_response)
@@ -313,9 +347,20 @@ async def _stream_response(
             ) as resp:
                 if resp.status_code != 200:
                     body = await resp.aread()
+                    body_str = body.decode(errors="replace")
+                    logger.error(
+                        "Backend (Anthropic) stream error %d:\n"
+                        "  URL: %s\n"
+                        "  Response headers: %s\n"
+                        "  Response body: %s",
+                        resp.status_code,
+                        _config["backend_url"],
+                        dict(resp.headers),
+                        body_str[:2000],
+                    )
                     error_chunk = {
                         "error": {
-                            "message": f"Backend error {resp.status_code}: {body.decode()[:500]}",
+                            "message": f"Backend error {resp.status_code}: {body_str[:500]}",
                             "type": "backend_error",
                         }
                     }
