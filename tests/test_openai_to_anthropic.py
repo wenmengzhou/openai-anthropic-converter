@@ -1835,3 +1835,23 @@ class TestEdgeCases:
         }
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
         assert result["max_tokens"] == 2048
+
+    def test_system_message_non_text_type_forced_to_text(self):
+        """Non-text type in system message content list should be forced to text type."""
+        openai_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": [
+                        {"type": "text", "text": "You are helpful."},
+                        {"type": "custom_type", "text": "Extra context"},
+                    ],
+                },
+                {"role": "user", "content": "Hi"},
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        # Both blocks should be forced to type "text" for Anthropic system
+        assert all(b["type"] == "text" for b in result["system"])
+        assert len(result["system"]) == 2

@@ -51,7 +51,8 @@ def extract_system_messages(
                     continue
                 if text_val is None:
                     continue
-                block = {"type": item_type, "text": text_val}
+                # Anthropic system only accepts text blocks — force type to text
+                block = {"type": "text", "text": text_val}
                 if "cache_control" in item:
                     block["cache_control"] = item["cache_control"]
                 system_blocks.append(block)
