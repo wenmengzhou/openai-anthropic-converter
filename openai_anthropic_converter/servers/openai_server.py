@@ -27,7 +27,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, AsyncIterator, Dict, Union
+from typing import Any, AsyncIterator, Dict
 
 try:
     from dotenv import load_dotenv
@@ -75,6 +75,7 @@ def _custom_openapi():
 
     app.openapi_schema = schema
     return schema
+
 
 logger = logging.getLogger("openai_server")
 
@@ -128,10 +129,7 @@ async def list_models():
     """List available models. Returns the configured model list."""
     return {
         "object": "list",
-        "data": [
-            {"id": m, "object": "model", "owned_by": "system"}
-            for m in _config["models"]
-        ],
+        "data": [{"id": m, "object": "model", "owned_by": "system"} for m in _config["models"]],
     }
 
 
@@ -192,7 +190,7 @@ async def debug_playground():
                     }
                 },
                 "text/event-stream": {
-                    "example": "data: {\"id\":\"chatcmpl-abc123\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"index\":0}]}\n\ndata: [DONE]\n\n"
+                    "example": 'data: {"id":"chatcmpl-abc123","choices":[{"delta":{"content":"Hello"},"index":0}]}\n\ndata: [DONE]\n\n'
                 },
             },
         },
@@ -468,10 +466,17 @@ def main():
     parser.add_argument(
         "--log-level", default="info", choices=["debug", "info", "warning", "error"]
     )
+    parser.add_argument(
+        "--log-dir",
+        default=os.environ.get("LOG_DIR", "logs"),
+        help="Directory for log files (default: $LOG_DIR or logs/)",
+    )
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=getattr(logging, args.log_level.upper()))
+    from .logging_config import setup_logging
+
+    setup_logging("openai_server", level=args.log_level, log_dir=args.log_dir)
 
     if not args.backend_api_key:
         logger.error("No API key provided. Set --backend-api-key or $ANTHROPIC_API_KEY")
@@ -479,9 +484,11 @@ def main():
 
     backend_url = _normalize_anthropic_url(args.backend_url)
 
-    models = [m.strip() for m in args.models.split(",") if m.strip()] if args.models else [
-        "claude-sonnet-4-20250514", "claude-opus-4-20250514"
-    ]
+    models = (
+        [m.strip() for m in args.models.split(",") if m.strip()]
+        if args.models
+        else ["claude-sonnet-4-20250514", "claude-opus-4-20250514"]
+    )
 
     configure(
         backend_url=backend_url,

@@ -632,7 +632,7 @@ def convert_request(
     # DashScope/Bailian uses enable_search (bool) to activate internet search.
     # Map to Anthropic's web_search server tool.
     enable_search = request.pop("enable_search", None)
-    search_options = request.pop("search_options", None)
+    request.pop("search_options", None)
     if enable_search:
         tools_list = result.get("tools", [])
         tools_list.append({"type": "web_search_20250305", "name": "web_search"})
