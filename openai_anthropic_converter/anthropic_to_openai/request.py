@@ -7,7 +7,6 @@ Converts Anthropic Messages API requests to OpenAI ChatCompletion format.
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..constants import BUDGET_TOKENS_THRESHOLDS
 from ..utils import translate_anthropic_image_to_openai, truncate_tool_name
 
 
@@ -331,33 +330,6 @@ def convert_tool_choice(
     return "auto"
 
 
-def convert_thinking_to_reasoning_effort(
-    thinking: Dict[str, Any],
-) -> Optional[str]:
-    """
-    Convert Anthropic thinking param to OpenAI reasoning_effort.
-
-    Mapping based on budget_tokens:
-    - >= 10000 -> "high"
-    - >= 5000 -> "medium"
-    - < 5000 -> "low"
-    """
-    if not isinstance(thinking, dict):
-        return None
-
-    thinking_type = thinking.get("type", "disabled")
-    if thinking_type == "disabled":
-        return None
-
-    if thinking_type in ("enabled", "adaptive"):
-        budget = thinking.get("budget_tokens", 0)
-        for threshold, effort in BUDGET_TOKENS_THRESHOLDS:
-            if budget >= threshold:
-                return effort
-        return "low"
-
-    return None
-
 
 def convert_output_format_to_response_format(
     output_format: Dict[str, Any],
@@ -443,12 +415,17 @@ def convert_request(
     if tool_choice:
         result["tool_choice"] = convert_tool_choice(tool_choice)
 
-    # thinking -> reasoning_effort (for non-Claude models)
+    # thinking -> enable_thinking + thinking_budget (Bailian/DashScope compat)
+    # Standard OpenAI uses reasoning_effort, but DashScope/Bailian uses enable_thinking.
+    # We output enable_thinking for broad compatibility.
     thinking = request.pop("thinking", None)
     if thinking and isinstance(thinking, dict):
-        reasoning_effort = convert_thinking_to_reasoning_effort(thinking)
-        if reasoning_effort:
-            result["reasoning_effort"] = reasoning_effort
+        thinking_type = thinking.get("type", "disabled")
+        if thinking_type in ("enabled", "adaptive"):
+            result["enable_thinking"] = True
+            budget = thinking.get("budget_tokens")
+            if budget:
+                result["thinking_budget"] = budget
 
     # output_format -> response_format
     output_format = request.pop("output_format", None)

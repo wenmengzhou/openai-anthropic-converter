@@ -109,7 +109,7 @@ class TestRequestConversion:
         assert result["tool_choice"]["type"] == "function"
         assert result["tool_choice"]["function"]["name"] == "search"
 
-    def test_thinking_to_reasoning_effort(self):
+    def test_thinking_to_enable_thinking(self):
         anthropic_req = {
             "model": "gpt-4o",
             "messages": [{"role": "user", "content": "Hi"}],
@@ -117,7 +117,8 @@ class TestRequestConversion:
             "max_tokens": 1024,
         }
         result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
-        assert result["reasoning_effort"] == "high"
+        assert result["enable_thinking"] is True
+        assert result["thinking_budget"] == 10000
 
     def test_thinking_disabled(self):
         anthropic_req = {
@@ -127,7 +128,7 @@ class TestRequestConversion:
             "max_tokens": 1024,
         }
         result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
-        assert "reasoning_effort" not in result
+        assert "enable_thinking" not in result
 
     def test_metadata_user_id(self):
         anthropic_req = {
@@ -844,7 +845,7 @@ class TestEdgeCases:
         assert assistant_msg["content"][0]["cache_control"] == {"type": "ephemeral"}
 
     def test_thinking_adaptive_type(self):
-        """thinking.type='adaptive' should map to reasoning_effort."""
+        """thinking.type='adaptive' should map to enable_thinking."""
         anthropic_req = {
             "model": "test",
             "messages": [{"role": "user", "content": "Hi"}],
@@ -852,10 +853,11 @@ class TestEdgeCases:
             "max_tokens": 1024,
         }
         result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
-        assert result["reasoning_effort"] == "medium"
+        assert result["enable_thinking"] is True
+        assert result["thinking_budget"] == 5000
 
-    def test_thinking_budget_minimal(self):
-        """Very low budget_tokens should map to 'low'."""
+    def test_thinking_budget_low(self):
+        """Low budget_tokens should still enable thinking with budget."""
         anthropic_req = {
             "model": "test",
             "messages": [{"role": "user", "content": "Hi"}],
@@ -863,18 +865,8 @@ class TestEdgeCases:
             "max_tokens": 1024,
         }
         result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
-        assert result["reasoning_effort"] == "low"
-
-    def test_thinking_budget_low(self):
-        """budget_tokens ~2000 should map to 'low'."""
-        anthropic_req = {
-            "model": "test",
-            "messages": [{"role": "user", "content": "Hi"}],
-            "thinking": {"type": "enabled", "budget_tokens": 2000},
-            "max_tokens": 1024,
-        }
-        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
-        assert result["reasoning_effort"] == "low"
+        assert result["enable_thinking"] is True
+        assert result["thinking_budget"] == 500
 
     def test_tool_choice_none(self):
         """tool_choice type 'none' should pass through."""
@@ -2526,7 +2518,7 @@ class TestRound6EdgeCases:
         assert result["stop_reason"] == "end_turn"
 
     def test_request_thinking_disabled(self):
-        """Anthropic thinking type=disabled should not set reasoning_effort."""
+        """Anthropic thinking type=disabled should not set enable_thinking."""
         anthropic_req = {
             "model": "test",
             "messages": [{"role": "user", "content": "Hi"}],
@@ -2534,10 +2526,10 @@ class TestRound6EdgeCases:
             "thinking": {"type": "disabled"},
         }
         result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
-        assert "reasoning_effort" not in result
+        assert "enable_thinking" not in result
 
     def test_request_thinking_adaptive(self):
-        """Anthropic thinking type=adaptive should map to reasoning_effort."""
+        """Anthropic thinking type=adaptive should map to enable_thinking."""
         anthropic_req = {
             "model": "test",
             "messages": [{"role": "user", "content": "Hi"}],
@@ -2545,7 +2537,8 @@ class TestRound6EdgeCases:
             "thinking": {"type": "adaptive", "budget_tokens": 8000},
         }
         result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
-        assert result["reasoning_effort"] == "medium"
+        assert result["enable_thinking"] is True
+        assert result["thinking_budget"] == 8000
 
 
 class TestRound10to12:

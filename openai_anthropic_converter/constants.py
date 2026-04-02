@@ -38,13 +38,6 @@ REASONING_EFFORT_TO_BUDGET_TOKENS = {
     "high": 10000,
 }
 
-# Thinking budget_tokens -> reasoning effort mapping (reverse)
-BUDGET_TOKENS_THRESHOLDS = [
-    (10000, "high"),
-    (5000, "medium"),
-    (2000, "low"),
-    (0, "low"),
-]
 
 # Models that support native output_format (instead of tool-based JSON mode)
 # Includes Claude 4.5+ models with various naming conventions
