@@ -4,6 +4,11 @@ OpenAI-compatible API server.
 Exposes an OpenAI /v1/chat/completions endpoint that forwards requests
 to an Anthropic Messages API backend, converting protocols in both directions.
 
+Features:
+    - Swagger UI at /docs, ReDoc at /redoc, OpenAPI JSON at /openapi.json
+    - Interactive debug playground at /debug
+    - Full streaming and non-streaming support
+
 Usage:
     # Forward to Anthropic API:
     python -m openai_anthropic_converter.servers.openai_server \
@@ -22,18 +27,64 @@ import json
 import logging
 import os
 import sys
-from typing import Any, AsyncIterator, Dict
+from typing import Any, AsyncIterator, Dict, Union
 
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from openai_anthropic_converter import OpenAIToAnthropicConverter
 
+from .schemas import (
+    HealthResponse,
+    OpenAIChatCompletionRequest,
+    OpenAIChatCompletionResponse,
+    OpenAIModelsResponse,
+)
+
+
+def _custom_openapi():
+    """Inject request body schemas into the OpenAPI spec."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    # Add request schemas to components
+    components = schema.setdefault("components", {})
+    schemas = components.setdefault("schemas", {})
+    schemas["OpenAIChatCompletionRequest"] = OpenAIChatCompletionRequest.model_json_schema(
+        ref_template="#/components/schemas/{model}"
+    )
+    # Inline nested $defs into components/schemas
+    for name, definition in schemas.get("OpenAIChatCompletionRequest", {}).pop("$defs", {}).items():
+        schemas[name] = definition
+
+    app.openapi_schema = schema
+    return schema
+
 logger = logging.getLogger("openai_server")
 
-app = FastAPI(title="OpenAI-compatible Proxy (Anthropic backend)")
+app = FastAPI(
+    title="OpenAI-compatible Proxy (Anthropic backend)",
+    description=(
+        "Converts OpenAI Chat Completion requests to Anthropic Messages API format, "
+        "forwards to an Anthropic backend, and converts responses back.\n\n"
+        "Supports streaming, tool calling, extended thinking, JSON schema output, "
+        "and Bailian/DashScope compatibility."
+    ),
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+app.openapi = _custom_openapi  # type: ignore[method-assign]
 
 # Global config — set via configure() or CLI args
 _config: Dict[str, Any] = {
@@ -53,14 +104,15 @@ def configure(**kwargs: Any) -> None:
 # ── Health check ────────────────────────────────────────────────────────
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health():
+    """Health check endpoint."""
     return {"status": "ok"}
 
 
-@app.get("/v1/models")
+@app.get("/v1/models", response_model=OpenAIModelsResponse, tags=["Models"])
 async def list_models():
-    """Minimal /v1/models endpoint for client compatibility."""
+    """List available models. Returns a static list of Anthropic models."""
     return {
         "object": "list",
         "data": [
@@ -70,16 +122,94 @@ async def list_models():
     }
 
 
+# ── Debug playground ──────────────────────────────────────────────────
+
+
+@app.get("/debug", response_class=HTMLResponse, include_in_schema=False)
+async def debug_playground():
+    """Interactive debug playground for testing API requests."""
+    from .debug_page import get_debug_html
+
+    return HTMLResponse(get_debug_html("openai"))
+
+
 # ── Chat Completions ───────────────────────────────────────────────────
 
 
-@app.post("/v1/chat/completions")
+@app.post(
+    "/v1/chat/completions",
+    response_model=OpenAIChatCompletionResponse,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "$ref": "#/components/schemas/OpenAIChatCompletionRequest",
+                    }
+                }
+            },
+        },
+    },
+    responses={
+        200: {
+            "description": "Successful non-streaming response",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": "chatcmpl-abc123",
+                        "object": "chat.completion",
+                        "created": 1700000000,
+                        "model": "claude-sonnet-4-20250514",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "Hello! How can I help you today?",
+                                },
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "completion_tokens": 8,
+                            "total_tokens": 18,
+                        },
+                    }
+                },
+                "text/event-stream": {
+                    "example": "data: {\"id\":\"chatcmpl-abc123\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"index\":0}]}\n\ndata: [DONE]\n\n"
+                },
+            },
+        },
+        400: {"description": "Invalid request (bad JSON or conversion error)"},
+        502: {"description": "Backend error"},
+        504: {"description": "Backend timeout"},
+    },
+    tags=["Chat"],
+    summary="Create chat completion",
+    description=(
+        "OpenAI-compatible `/v1/chat/completions` endpoint.\n\n"
+        "Accepts an OpenAI ChatCompletion request, converts it to Anthropic format, "
+        "forwards to the Anthropic backend, and converts the response back.\n\n"
+        "**Streaming**: Set `stream: true` to receive Server-Sent Events.\n\n"
+        "**Parameter mapping**:\n"
+        "- `tools` → Anthropic tool definitions\n"
+        "- `tool_choice` → Anthropic tool_choice (required→any)\n"
+        "- `response_format` → output_format (Claude 4.5+) or tool-based JSON mode\n"
+        "- `reasoning_effort` → thinking.budget_tokens\n"
+        "- `stop` → stop_sequences\n"
+        "- `user` → metadata.user_id\n\n"
+        "**[Bailian/DashScope compat]**:\n"
+        "- `enable_thinking` + `thinking_budget` → thinking param\n"
+        "- `enable_search` → web_search tool"
+    ),
+)
 async def chat_completions(request: Request):
     """
-    OpenAI-compatible /v1/chat/completions endpoint.
-
-    Accepts an OpenAI ChatCompletion request, converts it to Anthropic format,
-    forwards to the Anthropic backend, and converts the response back.
+    Accepts an OpenAI ChatCompletion request, converts to Anthropic,
+    forwards to backend, and converts response back.
     """
     try:
         openai_request = await request.json()
@@ -270,6 +400,8 @@ def main():
 
     logger.info("Starting OpenAI-compatible server on %s:%d", args.host, args.port)
     logger.info("Backend: %s", args.backend_url)
+    logger.info("Swagger UI: http://%s:%d/docs", args.host, args.port)
+    logger.info("Debug playground: http://%s:%d/debug", args.host, args.port)
 
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
 

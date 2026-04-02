@@ -4,6 +4,12 @@ Anthropic-compatible API server.
 Exposes an Anthropic /v1/messages endpoint that forwards requests
 to an OpenAI ChatCompletion API backend, converting protocols in both directions.
 
+Features:
+    - Swagger UI at /docs, ReDoc at /redoc, OpenAPI JSON at /openapi.json
+    - Interactive debug playground at /debug
+    - Full SSE streaming and non-streaming support
+    - Token counting endpoint (stub)
+
 Usage:
     # Forward to OpenAI API:
     python -m openai_anthropic_converter.servers.anthropic_server \
@@ -29,13 +35,65 @@ from typing import Any, AsyncIterator, Dict
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from openai_anthropic_converter import AnthropicToOpenAIConverter
 
+from .schemas import (
+    AnthropicCountTokensRequest,
+    AnthropicCountTokensResponse,
+    AnthropicErrorResponse,
+    AnthropicMessagesRequest,
+    AnthropicMessagesResponse,
+    HealthResponse,
+)
+
+
+def _custom_openapi():
+    """Inject request body schemas into the OpenAPI spec."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    components = schema.setdefault("components", {})
+    schemas = components.setdefault("schemas", {})
+
+    # Add request schemas
+    for model_cls in (AnthropicMessagesRequest, AnthropicCountTokensRequest):
+        model_schema = model_cls.model_json_schema(
+            ref_template="#/components/schemas/{model}"
+        )
+        name = model_cls.__name__
+        # Move nested $defs to top-level components/schemas
+        for def_name, definition in model_schema.pop("$defs", {}).items():
+            schemas[def_name] = definition
+        schemas[name] = model_schema
+
+    app.openapi_schema = schema
+    return schema
+
 logger = logging.getLogger("anthropic_server")
 
-app = FastAPI(title="Anthropic-compatible Proxy (OpenAI backend)")
+app = FastAPI(
+    title="Anthropic-compatible Proxy (OpenAI backend)",
+    description=(
+        "Converts Anthropic Messages API requests to OpenAI ChatCompletion format, "
+        "forwards to an OpenAI-compatible backend, and converts responses back.\n\n"
+        "Supports SSE streaming, tool calling (with name truncation/restoration), "
+        "extended thinking, structured output, and web search."
+    ),
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+app.openapi = _custom_openapi  # type: ignore[method-assign]
 
 # Global config — set via configure() or CLI args
 _config: Dict[str, Any] = {
@@ -53,22 +111,111 @@ def configure(**kwargs: Any) -> None:
 # ── Health check ────────────────────────────────────────────────────────
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health():
+    """Health check endpoint."""
     return {"status": "ok"}
+
+
+# ── Debug playground ──────────────────────────────────────────────────
+
+
+@app.get("/debug", response_class=HTMLResponse, include_in_schema=False)
+async def debug_playground():
+    """Interactive debug playground for testing API requests."""
+    from .debug_page import get_debug_html
+
+    return HTMLResponse(get_debug_html("anthropic"))
 
 
 # ── Messages endpoint ──────────────────────────────────────────────────
 
 
-@app.post("/v1/messages")
+@app.post(
+    "/v1/messages",
+    response_model=AnthropicMessagesResponse,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "$ref": "#/components/schemas/AnthropicMessagesRequest",
+                    }
+                }
+            },
+        },
+    },
+    responses={
+        200: {
+            "description": "Successful non-streaming response",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": "msg_abc123",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "gpt-4o",
+                        "content": [
+                            {"type": "text", "text": "Hello! How can I help you today?"}
+                        ],
+                        "stop_reason": "end_turn",
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 10, "output_tokens": 8},
+                    }
+                },
+                "text/event-stream": {
+                    "example": (
+                        "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{...}}\n\n"
+                        "event: content_block_start\ndata: {...}\n\n"
+                        "event: content_block_delta\ndata: {...}\n\n"
+                        "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+                    )
+                },
+            },
+        },
+        400: {
+            "description": "Invalid request",
+            "model": AnthropicErrorResponse,
+        },
+        401: {
+            "description": "Authentication error",
+            "model": AnthropicErrorResponse,
+        },
+        429: {
+            "description": "Rate limit error",
+            "model": AnthropicErrorResponse,
+        },
+        502: {
+            "description": "Backend error",
+            "model": AnthropicErrorResponse,
+        },
+        504: {
+            "description": "Backend timeout",
+            "model": AnthropicErrorResponse,
+        },
+    },
+    tags=["Messages"],
+    summary="Create a message",
+    description=(
+        "Anthropic-compatible `/v1/messages` endpoint.\n\n"
+        "Accepts an Anthropic Messages request, converts it to OpenAI format, "
+        "forwards to the OpenAI backend, and converts the response back.\n\n"
+        "**Streaming**: Set `stream: true` to receive Server-Sent Events in Anthropic format "
+        "(message_start, content_block_start, content_block_delta, content_block_stop, "
+        "message_delta, message_stop).\n\n"
+        "**Parameter mapping**:\n"
+        "- `system` → system role message\n"
+        "- `tools` → OpenAI tool definitions (names >64 chars truncated with hash)\n"
+        "- `tool_choice` → OpenAI tool_choice (any→required)\n"
+        "- `thinking` → reasoning_effort\n"
+        "- `output_format` → response_format\n"
+        "- `stop_sequences` → stop\n"
+        "- `metadata.user_id` → user\n\n"
+        "**Dropped params** (no OpenAI equivalent): `top_k`, `context_management`, `cache_control`"
+    ),
+)
 async def messages(request: Request):
-    """
-    Anthropic-compatible /v1/messages endpoint.
-
-    Accepts an Anthropic Messages request, converts it to OpenAI format,
-    forwards to the OpenAI backend, and converts the response back.
-    """
     try:
         anthropic_request = await request.json()
     except Exception:
@@ -237,7 +384,28 @@ async def _parse_and_convert_sse(
 # ── Count tokens endpoint (stub) ───────────────────────────────────────
 
 
-@app.post("/v1/messages/count_tokens")
+@app.post(
+    "/v1/messages/count_tokens",
+    response_model=AnthropicCountTokensResponse,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "$ref": "#/components/schemas/AnthropicCountTokensRequest",
+                    }
+                }
+            },
+        },
+    },
+    tags=["Messages"],
+    summary="Count tokens (stub)",
+    description=(
+        "Rough token count estimate (~4 chars per token). "
+        "For accurate counts, use the actual Anthropic API."
+    ),
+)
 async def count_tokens(request: Request):
     """Stub token counting endpoint. Returns a rough estimate."""
     try:
@@ -338,6 +506,8 @@ def main():
 
     logger.info("Starting Anthropic-compatible server on %s:%d", args.host, args.port)
     logger.info("Backend: %s", args.backend_url)
+    logger.info("Swagger UI: http://%s:%d/docs", args.host, args.port)
+    logger.info("Debug playground: http://%s:%d/debug", args.host, args.port)
 
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
 
