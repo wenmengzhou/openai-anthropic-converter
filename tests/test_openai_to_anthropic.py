@@ -1389,3 +1389,239 @@ class TestEdgeCases:
         schema = result["tools"][0]["input_schema"]
         assert schema["type"] == "object"
         assert "properties" in schema
+
+    def test_circular_ref_schema_does_not_infinite_loop(self):
+        """Schema with circular $ref should not cause infinite recursion."""
+        openai_req = {
+            "model": "claude-sonnet-4-5-20250514",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "tree",
+                    "schema": {
+                        "type": "object",
+                        "$defs": {
+                            "Node": {
+                                "type": "object",
+                                "properties": {
+                                    "value": {"type": "string"},
+                                    "children": {
+                                        "type": "array",
+                                        "items": {"$ref": "#/$defs/Node"},
+                                    },
+                                },
+                                "required": ["value"],
+                            }
+                        },
+                        "properties": {
+                            "root": {"$ref": "#/$defs/Node"},
+                        },
+                        "required": ["root"],
+                    },
+                },
+            },
+        }
+        # Should not hang or raise RecursionError
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert "output_format" in result
+        schema = result["output_format"]["schema"]
+        # The root ref should be expanded
+        assert schema["properties"]["root"]["type"] == "object"
+
+    def test_non_circular_ref_expanded_in_multiple_places(self):
+        """Same $ref used in multiple places should be expanded in all."""
+        openai_req = {
+            "model": "claude-sonnet-4-5-20250514",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "pair",
+                    "schema": {
+                        "type": "object",
+                        "$defs": {
+                            "Point": {
+                                "type": "object",
+                                "properties": {
+                                    "x": {"type": "number"},
+                                    "y": {"type": "number"},
+                                },
+                            }
+                        },
+                        "properties": {
+                            "start": {"$ref": "#/$defs/Point"},
+                            "end": {"$ref": "#/$defs/Point"},
+                        },
+                    },
+                },
+            },
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        schema = result["output_format"]["schema"]
+        # Both refs should be expanded
+        assert schema["properties"]["start"]["type"] == "object"
+        assert schema["properties"]["end"]["type"] == "object"
+        assert "x" in schema["properties"]["start"]["properties"]
+        assert "x" in schema["properties"]["end"]["properties"]
+
+    def test_json_object_mode_creates_tool(self):
+        """response_format type=json_object should create a generic JSON tool."""
+        openai_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [{"role": "user", "content": "Give me JSON"}],
+            "response_format": {"type": "json_object"},
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        # Should add json tool
+        assert "tools" in result
+        tool_names = [t["name"] for t in result["tools"]]
+        assert "json_tool_call" in tool_names
+        # Should set tool_choice to force the tool
+        assert result["tool_choice"]["type"] == "tool"
+        assert result["tool_choice"]["name"] == "json_tool_call"
+
+    def test_context_management_conversion(self):
+        """OpenAI context_management should convert to Anthropic format."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "context_management": [
+                {"type": "compaction", "compact_threshold": 200000}
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert "context_management" in result
+        assert result["context_management"]["edits"][0]["type"] == "compact_20260112"
+        assert result["context_management"]["edits"][0]["trigger"]["value"] == 200000
+
+    def test_context_management_already_anthropic_format(self):
+        """Already-Anthropic context_management should pass through."""
+        anthropic_ctx = {"edits": [{"type": "compact_20260112"}]}
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "context_management": anthropic_ctx,
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert result["context_management"] == anthropic_ctx
+
+    def test_stream_redacted_thinking_block(self):
+        """Anthropic SSE with redacted_thinking content block should not crash."""
+        events = [
+            {
+                "type": "message_start",
+                "message": {"id": "msg_1", "model": "test", "usage": {}},
+            },
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "redacted_thinking", "data": "abc123"},
+            },
+            {
+                "type": "content_block_stop",
+                "index": 0,
+            },
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {"type": "text", "text": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {"type": "text_delta", "text": "Hello"},
+            },
+            {
+                "type": "content_block_stop",
+                "index": 1,
+            },
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 10},
+            },
+            {"type": "message_stop"},
+        ]
+        chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
+        # Should have message_start, text delta, and finish
+        assert any(c["choices"][0]["delta"].get("content") == "Hello" for c in chunks)
+        assert any(c["choices"][0].get("finish_reason") == "stop" for c in chunks)
+
+    def test_stream_signature_delta(self):
+        """Signature delta should be emitted as thinking_blocks with signature."""
+        events = [
+            {
+                "type": "message_start",
+                "message": {"id": "msg_1", "model": "test", "usage": {}},
+            },
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "thinking_delta", "thinking": "Let me think"},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "signature_delta", "signature": "sig123"},
+            },
+            {
+                "type": "content_block_stop",
+                "index": 0,
+            },
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 20},
+            },
+            {"type": "message_stop"},
+        ]
+        chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
+        # Find the signature chunk
+        sig_chunks = [
+            c
+            for c in chunks
+            if any(
+                tb.get("signature") == "sig123"
+                for tb in c["choices"][0]["delta"].get("thinking_blocks", [])
+            )
+        ]
+        assert len(sig_chunks) == 1
+
+    def test_ensure_alternation_consecutive_user(self):
+        """Two consecutive user messages should be merged into one."""
+        openai_req = {
+            "model": "test",
+            "messages": [
+                {"role": "user", "content": "First"},
+                {"role": "user", "content": "Second"},
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        msgs = result["messages"]
+        # Both user messages get merged into one
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "user"
+        # Content should contain both texts as blocks
+        content = msgs[0]["content"]
+        texts = [b["text"] for b in content if b.get("type") == "text"]
+        assert "First" in texts
+        assert "Second" in texts
+
+    def test_ensure_alternation_starts_with_assistant(self):
+        """If first message is assistant, a placeholder user should be prepended."""
+        openai_req = {
+            "model": "test",
+            "messages": [
+                {"role": "assistant", "content": "I'm here to help"},
+                {"role": "user", "content": "Thanks"},
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        msgs = result["messages"]
+        assert msgs[0]["role"] == "user"

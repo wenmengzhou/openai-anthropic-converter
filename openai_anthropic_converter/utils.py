@@ -127,28 +127,40 @@ def filter_schema_for_anthropic(schema: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def unpack_defs(schema: Dict[str, Any], defs: Dict[str, Any]) -> None:
+def unpack_defs(
+    schema: Dict[str, Any],
+    defs: Dict[str, Any],
+    _expanding: Optional[set] = None,
+) -> None:
     """
     Recursively resolve $ref references in a JSON schema using provided $defs.
-    Modifies the schema in-place.
+    Modifies the schema in-place. Handles circular references by stopping
+    expansion when a definition is already being expanded in the current path.
     """
     if not isinstance(schema, dict):
         return
+
+    if _expanding is None:
+        _expanding = set()
 
     if "$ref" in schema:
         ref_path = schema.pop("$ref")
         # Extract the definition name from the ref path (e.g., "/$defs/Foo" -> "Foo")
         ref_name = ref_path.rsplit("/", 1)[-1]
         if ref_name in defs:
+            if ref_name in _expanding:
+                # Circular reference — stop expanding to avoid infinite recursion
+                return
+            _expanding.add(ref_name)
             schema.update(defs[ref_name])
 
     for key, value in list(schema.items()):
         if isinstance(value, dict):
-            unpack_defs(value, defs)
+            unpack_defs(value, defs, set(_expanding))
         elif isinstance(value, list):
             for item in value:
                 if isinstance(item, dict):
-                    unpack_defs(item, defs)
+                    unpack_defs(item, defs, set(_expanding))
 
 
 def translate_anthropic_image_to_openai(image_source: dict) -> Optional[str]:

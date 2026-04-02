@@ -105,7 +105,7 @@ class AnthropicSSEToOpenAIStream:
                     ],
                 }
             )
-        elif block_type == "thinking":
+        elif block_type in ("thinking", "redacted_thinking"):
             return None  # Will emit on delta
         else:
             return None  # Text blocks emit on delta

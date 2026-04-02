@@ -1993,6 +1993,246 @@ class TestRound4EdgeCases:
         assert result["tool_choice"] == "auto"
 
 
+    def test_response_redacted_thinking_preserved(self):
+        """Redacted thinking blocks should be preserved in Anthropic response."""
+        openai_resp = {
+            "id": "chatcmpl-1",
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Hello",
+                        "thinking_blocks": [
+                            {
+                                "type": "redacted_thinking",
+                                "data": "encrypted_data_here",
+                            }
+                        ],
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(openai_resp)
+        content = result["content"]
+        redacted = [b for b in content if b["type"] == "redacted_thinking"]
+        assert len(redacted) == 1
+        assert redacted[0]["data"] == "encrypted_data_here"
+
+    def test_response_reasoning_content_fallback(self):
+        """reasoning_content should be used as thinking block when no thinking_blocks."""
+        openai_resp = {
+            "id": "chatcmpl-1",
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "42",
+                        "reasoning_content": "Let me calculate...",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(openai_resp)
+        content = result["content"]
+        thinking = [b for b in content if b["type"] == "thinking"]
+        assert len(thinking) == 1
+        assert thinking[0]["thinking"] == "Let me calculate..."
+
+    def test_response_tool_name_restored(self):
+        """Truncated tool names should be restored in response conversion."""
+        long_name = "a" * 100
+        from openai_anthropic_converter.utils import truncate_tool_name
+
+        truncated = truncate_tool_name(long_name)
+        mapping = {truncated: long_name}
+
+        openai_resp = {
+            "id": "chatcmpl-1",
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": truncated,
+                                    "arguments": '{"x": 1}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(
+            openai_resp, tool_name_mapping=mapping
+        )
+        tool_block = [b for b in result["content"] if b["type"] == "tool_use"][0]
+        assert tool_block["name"] == long_name
+
+    def test_request_output_format_conversion(self):
+        """Anthropic output_format should convert to OpenAI response_format."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 100,
+            "output_format": {
+                "type": "json_schema",
+                "schema": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                },
+            },
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assert "response_format" in result
+        assert result["response_format"]["type"] == "json_schema"
+        assert "json_schema" in result["response_format"]
+        assert result["response_format"]["json_schema"]["strict"] is True
+
+    def test_stream_multiple_tool_calls(self):
+        """Multiple sequential tool calls in OpenAI stream should produce correct Anthropic events."""
+        chunks = [
+            _make_chunk({"role": "assistant", "content": ""}),
+            _make_chunk(
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "search", "arguments": ""},
+                        }
+                    ]
+                }
+            ),
+            _make_chunk(
+                {"tool_calls": [{"index": 0, "function": {"arguments": '{"q":'}}]}
+            ),
+            _make_chunk(
+                {"tool_calls": [{"index": 0, "function": {"arguments": '"hi"}'}}]}
+            ),
+            _make_chunk(
+                {
+                    "tool_calls": [
+                        {
+                            "index": 1,
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {"name": "fetch", "arguments": ""},
+                        }
+                    ]
+                }
+            ),
+            _make_chunk(
+                {"tool_calls": [{"index": 1, "function": {"arguments": '{"url":"x"}'}}]}
+            ),
+            _make_chunk({}, finish_reason="tool_calls"),
+        ]
+        events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
+        event_types = [e["type"] for e in events]
+
+        # Should have two tool_use blocks
+        tool_starts = [e for e in events if e["type"] == "content_block_start" and e.get("content_block", {}).get("type") == "tool_use"]
+        assert len(tool_starts) == 2
+        assert tool_starts[0]["content_block"]["name"] == "search"
+        assert tool_starts[1]["content_block"]["name"] == "fetch"
+
+        # Should have proper stop sequence
+        assert "message_delta" in event_types
+        assert "message_stop" in event_types
+
+    def test_stream_text_then_tool(self):
+        """Stream transitioning from text to tool_call should close text block first."""
+        chunks = [
+            _make_chunk({"role": "assistant", "content": "Let me search"}),
+            _make_chunk({"content": " for you."}),
+            _make_chunk(
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "search", "arguments": '{"q":"test"}'},
+                        }
+                    ]
+                }
+            ),
+            _make_chunk({}, finish_reason="tool_calls"),
+        ]
+        events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
+        event_types = [e["type"] for e in events]
+
+        # Text block should be opened and closed before tool block
+        text_start_idx = next(i for i, e in enumerate(events) if e["type"] == "content_block_start" and e.get("content_block", {}).get("type") == "text")
+        text_stop_idx = next(i for i, e in enumerate(events) if i > text_start_idx and e["type"] == "content_block_stop")
+        tool_start_idx = next(i for i, e in enumerate(events) if e["type"] == "content_block_start" and e.get("content_block", {}).get("type") == "tool_use")
+        assert text_stop_idx < tool_start_idx
+
+    def test_stream_usage_only_chunk(self):
+        """A usage-only chunk (no choices) should update usage without crashing."""
+        chunks = [
+            _make_chunk({"role": "assistant", "content": "Hi"}),
+            _make_chunk({}, finish_reason="stop"),
+            # Some providers send a final usage-only chunk
+            {
+                "id": "chatcmpl-123",
+                "object": "chat.completion.chunk",
+                "created": 1700000000,
+                "model": "test",
+                "choices": [],
+                "usage": {"prompt_tokens": 50, "completion_tokens": 10},
+            },
+        ]
+        # Should not raise
+        events = list(AnthropicToOpenAIConverter.convert_stream(chunks, model="test"))
+        assert any(e["type"] == "message_stop" for e in events)
+
+    def test_response_content_filter_stop_reason(self):
+        """OpenAI content_filter finish_reason should map to end_turn."""
+        openai_resp = {
+            "id": "chatcmpl-1",
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Filtered."},
+                    "finish_reason": "content_filter",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(openai_resp)
+        assert result["stop_reason"] == "end_turn"
+
+    def test_request_metadata_user_id(self):
+        """Anthropic metadata.user_id should map to OpenAI user field."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 100,
+            "metadata": {"user_id": "user-123"},
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assert result["user"] == "user-123"
+
+
 def _make_chunk(delta, finish_reason=None):
     """Helper to build an OpenAI streaming chunk."""
     return {
