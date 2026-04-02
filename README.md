@@ -1,61 +1,111 @@
-# OpenAI-Anthropic Protocol Converter
+# OpenAI ↔ Anthropic Protocol Converter
 
-A standalone, bidirectional protocol converter between the OpenAI Chat Completion API and the Anthropic Messages API. Supports both streaming and non-streaming requests/responses.
+English | [中文](README_zh.md)
 
-## Installation
+OpenAI and Anthropic define the two dominant LLM API protocols today. Many model providers only support one; many clients and frameworks only speak the other. This project bridges that gap with **complete, bidirectional** protocol conversion — any OpenAI client can call an Anthropic backend, and vice versa.
 
-Zero external dependencies (only requires `typing_extensions`). Simply copy the `openai_anthropic_converter/` directory into your project.
+**Design philosophy:** The core library is a pure conversion layer — **stateless, zero-dependency, dict-in/dict-out**. No HTTP clients, no framework coupling, no global state. Conversion functions take a plain dict and return a plain dict. This makes it trivially embeddable in any Python application, testable without mocking, and composable with any transport layer. The optional proxy servers are a thin convenience layer on top, not the other way around.
 
-## Core API
+---
 
-### Converter 1: `OpenAIToAnthropicConverter`
+## Two Ways to Use
 
-Converts OpenAI-format requests to Anthropic format for sending, and converts Anthropic responses back to OpenAI format.
+### 1. Library API — Embed in Your Application
+
+Import the converter as a library and perform protocol conversion in your own code. Best when you need **full control over request/response handling**.
+
+```bash
+pip install -e .
+```
+
+**OpenAI format → Anthropic format (calling an Anthropic backend)**
 
 ```python
 from openai_anthropic_converter import OpenAIToAnthropicConverter
 
-# Non-streaming
+# Convert request
 anthropic_req = OpenAIToAnthropicConverter.convert_request(openai_request)
 # ... send to Anthropic API ...
 openai_resp = OpenAIToAnthropicConverter.convert_response(anthropic_response)
 
 # Streaming
-for chunk in OpenAIToAnthropicConverter.convert_stream(anthropic_sse_events):
-    print(chunk)  # OpenAI chat.completion.chunk format
-
-# Async streaming
 async for chunk in OpenAIToAnthropicConverter.aconvert_stream(anthropic_sse_events):
-    print(chunk)
+    print(chunk)  # OpenAI chat.completion.chunk format
 ```
 
-### Converter 2: `AnthropicToOpenAIConverter`
-
-Converts Anthropic `/v1/messages` requests to OpenAI format for forwarding, and converts OpenAI responses back to Anthropic format.
+**Anthropic format → OpenAI format (calling an OpenAI backend)**
 
 ```python
+import json
 from openai_anthropic_converter import AnthropicToOpenAIConverter
 
-# Non-streaming (note: convert_request returns a tuple)
+# Convert request (returns a tuple with tool name mapping)
 openai_req, tool_name_mapping = AnthropicToOpenAIConverter.convert_request(anthropic_request)
-# ... send to OpenAI-compatible API ...
+# ... send to OpenAI API ...
 anthropic_resp = AnthropicToOpenAIConverter.convert_response(
     openai_response, tool_name_mapping=tool_name_mapping
 )
-
-# Streaming
-for event in AnthropicToOpenAIConverter.convert_stream(
-    openai_chunks, tool_name_mapping=tool_name_mapping
-):
-    # Each event is an Anthropic SSE event dict (message_start, content_block_delta, etc.)
-    print(f"event: {event['type']}\ndata: {json.dumps(event)}\n")
 
 # Async streaming
 async for event in AnthropicToOpenAIConverter.aconvert_stream(
     openai_chunks, tool_name_mapping=tool_name_mapping
 ):
-    print(event)
+    print(f"event: {event['type']}\ndata: {json.dumps(event)}\n")
 ```
+
+> **Note:** `AnthropicToOpenAIConverter.convert_request()` returns `(request, tool_name_mapping)`. OpenAI enforces a 64-character tool name limit — the converter auto-truncates long names with a SHA-256 hash suffix and builds a reverse mapping. Pass this mapping to `convert_response()` or `aconvert_stream()` to restore the original names.
+
+---
+
+### 2. HTTP Proxy Server — Drop-in Replacement
+
+Launch a proxy server that exposes one protocol's interface and auto-forwards to a backend speaking the other. Best when you want to **use existing clients without any code changes**.
+
+```bash
+pip install -e ".[server]"
+```
+
+**OpenAI-compatible server** (makes an Anthropic backend look like OpenAI)
+
+```bash
+# Start the server
+./start_openai_server.sh
+# Or with explicit args:
+python -m openai_anthropic_converter.servers.openai_server \
+    --backend-url https://api.anthropic.com/v1 \
+    --backend-api-key $ANTHROPIC_API_KEY \
+    --port 8001
+
+# Call it with any OpenAI client
+curl http://localhost:8001/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"Hello!"}],"max_tokens":1024}'
+```
+
+**Anthropic-compatible server** (makes an OpenAI backend look like Anthropic)
+
+```bash
+# Start the server
+./start_anthropic_server.sh
+# Or with explicit args:
+python -m openai_anthropic_converter.servers.anthropic_server \
+    --backend-url https://api.openai.com/v1 \
+    --backend-api-key $OPENAI_API_KEY \
+    --port 8002
+
+# Call it with any Anthropic client
+curl http://localhost:8002/v1/messages \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: anything" \
+    -H "anthropic-version: 2023-06-01" \
+    -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello!"}],"max_tokens":1024}'
+```
+
+Both servers provide: Swagger UI (`/docs`), ReDoc (`/redoc`), OpenAPI JSON (`/openapi.json`), interactive debug playground (`/debug`), and health check (`/health`).
+
+Configuration is auto-loaded from `.env` and can be overridden with environment variables or CLI args.
+
+---
 
 ## Feature Coverage
 
@@ -72,42 +122,47 @@ async for event in AnthropicToOpenAIConverter.aconvert_stream(
 | response_format ↔ output_format | ✅ |
 | stop ↔ stop_sequences | ✅ |
 | context_management | ✅ |
-| Message alternation merging | ✅ |
+| Message alternation merging | ✅ (Anthropic requires strict user/assistant alternation) |
 
-## Design Notes
+## Design Highlights
 
-- **Zero LiteLLM dependency** — pure dict in/out, TypedDicts for type annotations only
-- **Streaming via state machines** — `AnthropicSSEToOpenAIStream` and `OpenAIToAnthropicSSEStream` track content block type/index internally
-- **Tool name truncation recovery** — `AnthropicToOpenAIConverter.convert_request()` returns `(request, tool_name_mapping)`, pass the mapping to `convert_response()` to restore original names exceeding OpenAI's 64-char limit
+- **Zero external dependencies** — core library is pure dict in/out; TypedDicts are for type annotations only
+- **Streaming via state machines** — `AnthropicSSEToOpenAIStream` / `OpenAIToAnthropicSSEStream` track content block type and index internally
+- **Forward-compatible** — unknown parameters are silently dropped, not rejected
+
+## Installation & Development
+
+```bash
+pip install -e .              # Core library only
+pip install -e ".[server]"    # With proxy servers
+pip install -e ".[dev]"       # With dev tools (pytest, ruff, mypy)
+
+python -m pytest tests/ -v    # Run tests
+ruff check . && ruff format --check .    # Lint
+mypy --ignore-missing-imports openai_anthropic_converter/
+```
 
 ## Project Structure
 
 ```
 openai_anthropic_converter/
 ├── __init__.py                    # Exports both Converter classes
-├── constants.py                   # Constants (stop reason maps, defaults)
-├── utils.py                       # Utilities (tool name truncation, schema filtering)
-├── types/
-│   ├── anthropic_types.py         # Anthropic protocol TypedDicts
-│   ├── openai_types.py            # OpenAI protocol TypedDicts
-│   └── streaming_types.py         # Streaming event types
-├── openai_to_anthropic/
-│   ├── converter.py               # OpenAIToAnthropicConverter main class
-│   ├── request.py                 # OpenAI request → Anthropic request
-│   ├── response.py                # Anthropic response → OpenAI response
-│   └── stream.py                  # Anthropic SSE → OpenAI chunks
-├── anthropic_to_openai/
-│   ├── converter.py               # AnthropicToOpenAIConverter main class
-│   ├── request.py                 # Anthropic request → OpenAI request
-│   ├── response.py                # OpenAI response → Anthropic response
-│   └── stream.py                  # OpenAI chunks → Anthropic SSE
-└── tests/
-    ├── test_openai_to_anthropic.py
-    └── test_anthropic_to_openai.py
-```
-
-## Running Tests
-
-```bash
-python -m pytest openai_anthropic_converter/tests/ -v
+├── constants.py                   # Constants (stop reason maps, model lists)
+├── utils.py                       # Utilities (name truncation, JSON schema filtering)
+├── types/                         # TypedDict definitions
+├── openai_to_anthropic/           # Direction 1: OpenAI → Anthropic → OpenAI
+│   ├── converter.py               # OpenAIToAnthropicConverter facade
+│   ├── request.py                 # Request conversion
+│   ├── response.py                # Response conversion
+│   └── stream.py                  # Streaming conversion (state machine)
+├── anthropic_to_openai/           # Direction 2: Anthropic → OpenAI → Anthropic
+│   ├── converter.py               # AnthropicToOpenAIConverter facade
+│   ├── request.py                 # Request conversion
+│   ├── response.py                # Response conversion
+│   └── stream.py                  # Streaming conversion (state machine)
+└── servers/                       # HTTP proxy servers (requires [server] extras)
+    ├── openai_server.py           # /v1/chat/completions endpoint
+    ├── anthropic_server.py        # /v1/messages endpoint
+    ├── schemas.py                 # Pydantic models (OpenAPI docs)
+    └── debug_page.py              # Interactive debug playground
 ```
