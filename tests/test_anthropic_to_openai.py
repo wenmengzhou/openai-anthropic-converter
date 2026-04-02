@@ -855,7 +855,7 @@ class TestEdgeCases:
         assert result["reasoning_effort"] == "medium"
 
     def test_thinking_budget_minimal(self):
-        """Very low budget_tokens should map to 'minimal'."""
+        """Very low budget_tokens should map to 'low'."""
         anthropic_req = {
             "model": "test",
             "messages": [{"role": "user", "content": "Hi"}],
@@ -863,7 +863,7 @@ class TestEdgeCases:
             "max_tokens": 1024,
         }
         result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
-        assert result["reasoning_effort"] == "minimal"
+        assert result["reasoning_effort"] == "low"
 
     def test_thinking_budget_low(self):
         """budget_tokens ~2000 should map to 'low'."""

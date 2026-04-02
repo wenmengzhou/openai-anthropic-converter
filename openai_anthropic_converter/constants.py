@@ -43,7 +43,7 @@ BUDGET_TOKENS_THRESHOLDS = [
     (10000, "high"),
     (5000, "medium"),
     (2000, "low"),
-    (0, "minimal"),
+    (0, "low"),
 ]
 
 # Models that support native output_format (instead of tool-based JSON mode)

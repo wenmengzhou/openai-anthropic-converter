@@ -340,8 +340,7 @@ def convert_thinking_to_reasoning_effort(
     Mapping based on budget_tokens:
     - >= 10000 -> "high"
     - >= 5000 -> "medium"
-    - >= 2000 -> "low"
-    - < 2000 -> "minimal"
+    - < 5000 -> "low"
     """
     if not isinstance(thinking, dict):
         return None
@@ -355,7 +354,7 @@ def convert_thinking_to_reasoning_effort(
         for threshold, effort in BUDGET_TOKENS_THRESHOLDS:
             if budget >= threshold:
                 return effort
-        return "minimal"
+        return "low"
 
     return None
 
