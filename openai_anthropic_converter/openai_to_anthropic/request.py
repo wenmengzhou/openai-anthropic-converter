@@ -45,10 +45,13 @@ def extract_system_messages(
             for item in content:
                 if not isinstance(item, dict):
                     continue
+                item_type = item.get("type", "text")
                 text_val = item.get("text")
-                if item.get("type") == "text" and not text_val:
+                if item_type == "text" and not text_val:
                     continue
-                block = {"type": item.get("type", "text"), "text": text_val}
+                if text_val is None:
+                    continue
+                block = {"type": item_type, "text": text_val}
                 if "cache_control" in item:
                     block["cache_control"] = item["cache_control"]
                 system_blocks.append(block)
@@ -268,7 +271,8 @@ def _merge_consecutive_messages(
             curr_list = _to_content_list(curr_content)
             merged[-1]["content"] = prev_list + curr_list
         else:
-            merged.append(msg)
+            # Copy to avoid mutating the original message when merging later
+            merged.append(dict(msg))
 
     return merged
 

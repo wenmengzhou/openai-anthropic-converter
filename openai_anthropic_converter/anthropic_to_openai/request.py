@@ -186,7 +186,7 @@ def _convert_assistant_message(
                     text_blocks_with_cache.append(text_block)
                     text_parts.append(block.get("text", ""))
 
-                elif block_type == "tool_use":
+                elif block_type in ("tool_use", "server_tool_use", "mcp_tool_use"):
                     tool_name = truncate_tool_name(block.get("name", ""))
                     tc: Dict[str, Any] = {
                         "id": block.get("id", ""),

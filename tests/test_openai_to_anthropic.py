@@ -1282,3 +1282,110 @@ class TestEdgeCases:
         chunks = list(OpenAIToAnthropicConverter.convert_stream(events))
         # ping should not produce any chunk
         assert all(c.get("object") == "chat.completion.chunk" for c in chunks)
+
+    def test_system_message_with_non_text_type_ignored(self):
+        """System message items without text should be safely skipped."""
+        openai_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": [
+                        {"type": "text", "text": "Valid system text"},
+                        {"type": "image_url", "image_url": {"url": "http://x.com/img.jpg"}},
+                    ],
+                },
+                {"role": "user", "content": "Hi"},
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        # Only the text block should be in system
+        assert len(result["system"]) == 1
+        assert result["system"][0]["text"] == "Valid system text"
+
+    def test_merge_does_not_mutate_original_messages(self):
+        """Merging consecutive messages should not mutate the originals."""
+        original_msgs = [
+            {"role": "user", "content": "First"},
+            {"role": "tool", "tool_call_id": "c1", "content": "Tool result"},
+        ]
+        # Make copies to check they're not mutated
+        import copy
+
+        saved = copy.deepcopy(original_msgs)
+        openai_req = {
+            "model": "test",
+            "messages": original_msgs,
+        }
+        OpenAIToAnthropicConverter.convert_request(openai_req)
+        # Original messages should not be mutated
+        assert original_msgs[0]["content"] == saved[0]["content"]
+
+    def test_json_mode_empty_arguments_content(self):
+        """JSON mode with empty arguments should still set content as string."""
+        from openai_anthropic_converter.constants import RESPONSE_FORMAT_TOOL_NAME
+
+        anthropic_resp = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "test",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tu_1",
+                    "name": RESPONSE_FORMAT_TOOL_NAME,
+                    "input": {},
+                },
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 5, "output_tokens": 5},
+        }
+        result = OpenAIToAnthropicConverter.convert_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        # Content should be the JSON string, not None
+        assert msg["content"] is not None
+        assert msg["content"] == "{}"
+        # tool_calls should be empty (JSON mode extracts content)
+        assert "tool_calls" not in msg
+
+    def test_reasoning_effort_none_ignored(self):
+        """reasoning_effort='none' should not set thinking."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning_effort": "none",
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert "thinking" not in result
+
+    def test_response_format_text_type_ignored(self):
+        """response_format with type='text' should not produce output_format."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "response_format": {"type": "text"},
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        assert "output_format" not in result
+        assert "tools" not in result
+
+    def test_tool_with_non_object_schema(self):
+        """Tool with non-object schema type should be forced to object."""
+        openai_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_list",
+                        "parameters": {"type": "array", "items": {"type": "string"}},
+                    },
+                }
+            ],
+        }
+        result = OpenAIToAnthropicConverter.convert_request(openai_req)
+        schema = result["tools"][0]["input_schema"]
+        assert schema["type"] == "object"
+        assert "properties" in schema

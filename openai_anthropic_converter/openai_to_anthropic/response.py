@@ -190,15 +190,19 @@ def convert_response(anthropic_response: Dict[str, Any]) -> Dict[str, Any]:
     ) = extract_response_content(content_blocks)
 
     # Check for JSON mode (tool-based)
+    json_mode = False
     json_mode_content = _check_json_mode(tool_calls)
     if json_mode_content is not None:
         text_content = json_mode_content
         tool_calls = []
+        json_mode = True
 
     # Build message
+    # For JSON mode, always include content (even empty string)
+    # For normal mode, use None if no text content
     message: Dict[str, Any] = {
         "role": "assistant",
-        "content": text_content if text_content else None,
+        "content": text_content if (text_content or json_mode) else None,
     }
 
     if tool_calls:

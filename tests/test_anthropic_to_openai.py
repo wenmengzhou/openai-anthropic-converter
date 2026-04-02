@@ -1793,6 +1793,206 @@ class TestRoundtrip:
         assert tool_blocks[0]["input"] == {"q": "test"}
 
 
+class TestRound4EdgeCases:
+    """Round 4: Additional edge cases found in deep review."""
+
+    def test_assistant_server_tool_use_in_request(self):
+        """server_tool_use in assistant messages should convert to tool_calls."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [
+                {"role": "user", "content": "Search"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "server_tool_use",
+                            "id": "stu_1",
+                            "name": "web_search",
+                            "input": {"query": "test"},
+                        },
+                    ],
+                },
+            ],
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assistant_msgs = [m for m in result["messages"] if m["role"] == "assistant"]
+        assert len(assistant_msgs) == 1
+        assert len(assistant_msgs[0]["tool_calls"]) == 1
+        assert assistant_msgs[0]["tool_calls"][0]["function"]["name"] == "web_search"
+
+    def test_assistant_mcp_tool_use_in_request(self):
+        """mcp_tool_use in assistant messages should convert to tool_calls."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [
+                {"role": "user", "content": "Use MCP"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "mcp_tool_use",
+                            "id": "mtu_1",
+                            "name": "my_mcp_tool",
+                            "input": {"key": "val"},
+                        },
+                    ],
+                },
+            ],
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assistant_msgs = [m for m in result["messages"] if m["role"] == "assistant"]
+        assert len(assistant_msgs) == 1
+        assert assistant_msgs[0]["tool_calls"][0]["function"]["name"] == "my_mcp_tool"
+
+    def test_tool_result_empty_list_content(self):
+        """tool_result with empty list content should handle gracefully."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [],
+                        },
+                    ],
+                },
+            ],
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        tool_msgs = [m for m in result["messages"] if m["role"] == "tool"]
+        assert len(tool_msgs) == 1
+        # Empty list stringified
+        assert tool_msgs[0]["content"] == "[]"
+
+    def test_response_usage_no_cache_fields(self):
+        """Usage without cache fields should not include cache keys."""
+        resp = {
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Hi"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(resp)
+        usage = result["usage"]
+        assert usage["input_tokens"] == 10
+        assert usage["output_tokens"] == 5
+        # No cache fields should be present
+        assert "cache_creation_input_tokens" not in usage
+        assert "cache_read_input_tokens" not in usage
+
+    def test_stream_model_extracted_from_first_chunk(self):
+        """Model name should be extracted from the first chunk."""
+        chunks = [
+            {
+                "id": "chatcmpl-123",
+                "object": "chat.completion.chunk",
+                "created": 1700000000,
+                "model": "gpt-4-turbo",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": ""},
+                        "finish_reason": None,
+                    }
+                ],
+            },
+            _make_chunk(delta={"content": "Hi"}),
+            _make_chunk(delta={}, finish_reason="stop"),
+        ]
+        events = list(AnthropicToOpenAIConverter.convert_stream(chunks))
+
+        msg_start = events[0]
+        assert msg_start["type"] == "message_start"
+        assert msg_start["message"]["model"] == "gpt-4-turbo"
+
+    def test_response_thinking_with_signature_preserved(self):
+        """Thinking blocks with signatures should preserve signature field."""
+        resp = {
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Answer",
+                        "thinking_blocks": [
+                            {
+                                "type": "thinking",
+                                "thinking": "Deep thought",
+                                "signature": "sig_abc123",
+                            }
+                        ],
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        }
+        result = AnthropicToOpenAIConverter.convert_response(resp)
+        thinking = [b for b in result["content"] if b["type"] == "thinking"]
+        assert thinking[0]["signature"] == "sig_abc123"
+
+    def test_user_content_with_only_tool_results(self):
+        """User message with only tool_results (no text) should produce only tool messages."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": "result 1",
+                        },
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_2",
+                            "content": "result 2",
+                        },
+                    ],
+                },
+            ],
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        tool_msgs = [m for m in result["messages"] if m["role"] == "tool"]
+        assert len(tool_msgs) == 2
+        user_msgs = [m for m in result["messages"] if m["role"] == "user"]
+        assert len(user_msgs) == 0  # No user text content
+
+    def test_disable_parallel_tool_use_from_tool_choice(self):
+        """disable_parallel_tool_use in tool_choice should be preserved in the mapping."""
+        anthropic_req = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tool_choice": {"type": "auto", "disable_parallel_tool_use": True},
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        # disable_parallel_tool_use is an Anthropic concept - on OpenAI side
+        # it maps to tool_choice="auto" (the disable part is lost in conversion)
+        assert result["tool_choice"] == "auto"
+
+
 def _make_chunk(delta, finish_reason=None):
     """Helper to build an OpenAI streaming chunk."""
     return {
