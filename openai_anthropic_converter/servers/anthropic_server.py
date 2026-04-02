@@ -572,10 +572,17 @@ def main():
     parser.add_argument(
         "--log-level", default="info", choices=["debug", "info", "warning", "error"]
     )
+    parser.add_argument(
+        "--log-dir",
+        default=os.environ.get("LOG_DIR", "logs"),
+        help="Directory for log files (default: $LOG_DIR or logs/)",
+    )
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=getattr(logging, args.log_level.upper()))
+    from .logging_config import setup_logging
+
+    setup_logging("anthropic_server", level=args.log_level, log_dir=args.log_dir)
 
     if not args.backend_api_key:
         logger.error("No API key provided. Set --backend-api-key or $OPENAI_API_KEY")
