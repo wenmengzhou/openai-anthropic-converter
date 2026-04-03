@@ -39,7 +39,7 @@ REASONING_EFFORT_TO_BUDGET_TOKENS = {
 }
 
 
-# Models that support native output_format (instead of tool-based JSON mode)
+# Models that support native output_config (instead of tool-based JSON mode)
 # Includes Claude 4.5+ models with various naming conventions
 OUTPUT_FORMAT_SUPPORTED_MODEL_SUBSTRINGS = {
     "sonnet-4.5",

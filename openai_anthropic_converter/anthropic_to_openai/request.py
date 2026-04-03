@@ -426,10 +426,16 @@ def convert_request(
             if budget:
                 result["thinking_budget"] = budget
 
-    # output_format -> response_format
+    # output_config.format or output_format (legacy) -> response_format
+    output_config = request.pop("output_config", None)
     output_format = request.pop("output_format", None)
-    if output_format:
-        resp_format = convert_output_format_to_response_format(output_format)
+    fmt = None
+    if output_config and isinstance(output_config, dict):
+        fmt = output_config.get("format")
+    if not fmt and output_format:
+        fmt = output_format
+    if fmt:
+        resp_format = convert_output_format_to_response_format(fmt)
         if resp_format:
             result["response_format"] = resp_format
 

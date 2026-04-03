@@ -36,12 +36,14 @@ try:
 except ImportError:
     pass
 
-import httpx
+import anthropic
+import httpx as _httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from openai_anthropic_converter import OpenAIToAnthropicConverter
+from openai_anthropic_converter.openai_to_anthropic.stream import AnthropicSSEToOpenAIStream
 
 from .schemas import (
     HealthResponse,
@@ -96,18 +98,31 @@ app.openapi = _custom_openapi  # type: ignore[method-assign]
 
 # Global config — set via configure() or CLI args
 _config: Dict[str, Any] = {
-    "backend_url": "https://api.anthropic.com/v1/messages",
+    "backend_base_url": "https://api.anthropic.com",
     "backend_api_key": "",
     "anthropic_version": "2023-06-01",
-    "timeout": 300,
+    "timeout": 3600,
     "default_max_tokens": 4096,
     "models": ["claude-sonnet-4-20250514", "claude-opus-4-20250514"],
 }
 
+# Anthropic SDK client — initialized in configure()
+_client: anthropic.AsyncAnthropic | None = None
+
 
 def configure(**kwargs: Any) -> None:
-    """Update server configuration. Call before starting the server."""
+    """Update server configuration and (re)create the Anthropic client."""
+    global _client
     _config.update(kwargs)
+    _client = anthropic.AsyncAnthropic(
+        api_key=_config["backend_api_key"],
+        base_url=_config["backend_base_url"],
+        # DashScope/Bailian compatibility: send both x-api-key (SDK default) and Bearer
+        default_headers={"Authorization": f"Bearer {_config['backend_api_key']}"},
+        timeout=_config["timeout"],
+        # Bypass system proxy to avoid SSE buffering
+        http_client=_httpx.AsyncClient(trust_env=False),
+    )
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -208,7 +223,7 @@ async def debug_playground():
         "**Parameter mapping**:\n"
         "- `tools` → Anthropic tool definitions\n"
         "- `tool_choice` → Anthropic tool_choice (required→any)\n"
-        "- `response_format` → output_format (Claude 4.5+) or tool-based JSON mode\n"
+        "- `response_format` → output_config (Claude 4.5+) or tool-based JSON mode\n"
         "- `reasoning_effort` → thinking.budget_tokens\n"
         "- `stop` → stop_sequences\n"
         "- `user` → metadata.user_id\n\n"
@@ -245,80 +260,93 @@ async def chat_completions(request: Request):
         logger.error("Request conversion failed: %s", e)
         raise HTTPException(status_code=400, detail=f"Request conversion error: {e}")
 
-    # Set stream flag for Anthropic
-    anthropic_request["stream"] = is_stream
-
     logger.debug(
         "Converted request -> Anthropic:\n%s",
         json.dumps(anthropic_request, indent=2, ensure_ascii=False),
     )
 
-    # Build headers for Anthropic API
-    # Send both x-api-key (standard Anthropic) and Authorization Bearer
-    # (DashScope/Bailian Anthropic-native) for broad compatibility
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": _config["backend_api_key"],
-        "Authorization": f"Bearer {_config['backend_api_key']}",
-        "anthropic-version": _config["anthropic_version"],
-    }
-
     if is_stream:
         return StreamingResponse(
-            _stream_response(anthropic_request, headers),
-            media_type="text/event-stream",
+            _stream_response(anthropic_request),
+            media_type="text/event-stream; charset=utf-8",
             headers={
-                "Cache-Control": "no-cache",
+                "Cache-Control": "no-cache, no-transform",
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
+                "Transfer-Encoding": "chunked",
             },
         )
     else:
-        return await _non_stream_response(anthropic_request, headers)
+        return await _non_stream_response(anthropic_request)
+
+
+# SDK named parameters (beyond model/messages/max_tokens/stream) that should be
+# extracted from extra_body and passed as keyword args to messages.create/stream.
+_SDK_NAMED_PARAMS = {
+    "system",
+    "temperature",
+    "top_p",
+    "top_k",
+    "stop_sequences",
+    "thinking",
+    "tools",
+    "tool_choice",
+    "metadata",
+    "output_config",
+    "service_tier",
+    "cache_control",
+}
+
+
+def _extract_sdk_params(params: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Split params into SDK named kwargs and extra_body remainder."""
+    sdk_kwargs: Dict[str, Any] = {}
+    extra: Dict[str, Any] = {}
+    for k, v in params.items():
+        if k in _SDK_NAMED_PARAMS:
+            sdk_kwargs[k] = v
+        else:
+            extra[k] = v
+    return sdk_kwargs, extra
 
 
 async def _non_stream_response(
     anthropic_request: Dict[str, Any],
-    headers: Dict[str, str],
 ) -> JSONResponse:
     """Send non-streaming request to Anthropic and convert response."""
-    async with httpx.AsyncClient(timeout=_config["timeout"]) as client:
-        try:
-            resp = await client.post(
-                _config["backend_url"],
-                json=anthropic_request,
-                headers=headers,
-            )
-        except httpx.TimeoutException:
-            raise HTTPException(status_code=504, detail="Backend request timed out")
-        except httpx.ConnectError as e:
-            raise HTTPException(status_code=502, detail=f"Backend connection error: {e}")
-
-    if resp.status_code != 200:
-        body = resp.text
-        logger.error(
-            "Backend (Anthropic) error %d:\n"
-            "  URL: %s\n"
-            "  Request body: %s\n"
-            "  Response headers: %s\n"
-            "  Response body: %s",
-            resp.status_code,
-            _config["backend_url"],
-            json.dumps(anthropic_request, ensure_ascii=False)[:2000],
-            dict(resp.headers),
-            body[:2000],
-        )
-        raise HTTPException(
-            status_code=resp.status_code,
-            detail=f"Backend error: {body[:500]}",
-        )
+    assert _client is not None, "Client not initialized. Call configure() first."
+    params = dict(anthropic_request)
+    model = params.pop("model")
+    messages = params.pop("messages")
+    max_tokens = params.pop("max_tokens")
+    params.pop("stream", None)
+    sdk_kwargs, extra = _extract_sdk_params(params)
 
     try:
-        anthropic_response = resp.json()
-    except Exception:
-        logger.error("Invalid JSON from backend: %s", resp.text[:500])
-        raise HTTPException(status_code=502, detail="Invalid JSON from backend")
+        response = await _client.messages.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            **sdk_kwargs,
+            extra_body=extra if extra else None,
+        )
+    except anthropic.APITimeoutError:
+        raise HTTPException(status_code=504, detail="Backend request timed out")
+    except anthropic.APIConnectionError as e:
+        raise HTTPException(status_code=502, detail=f"Backend connection error: {e}")
+    except anthropic.APIStatusError as e:
+        logger.error(
+            "Backend (Anthropic) error %d:\n  URL: %s\n  Response: %s",
+            e.status_code,
+            _config["backend_base_url"],
+            str(e.body)[:2000],
+        )
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=f"Backend error: {str(e.body)[:500]}",
+        )
 
+    anthropic_response = response.model_dump()
     logger.debug(
         "Backend (Anthropic) response:\n%s",
         json.dumps(anthropic_response, indent=2, ensure_ascii=False)[:3000],
@@ -338,102 +366,146 @@ async def _non_stream_response(
     return JSONResponse(content=openai_response)
 
 
+def _log_stream_summary(
+    direction: str,
+    backend_events: list[Dict[str, Any]],
+    output_chunks: list[Dict[str, Any]],
+) -> None:
+    """Log a structured summary of a completed stream."""
+    model = ""
+    content = ""
+    thinking = ""
+    tool_calls: list[str] = []
+    usage: Dict[str, Any] = {}
+    stop_reason = ""
+
+    for ev in backend_events:
+        ev_type = ev.get("type", "")
+        if ev_type == "message_start":
+            msg = ev.get("message", {})
+            model = msg.get("model", "")
+            usage.update(msg.get("usage", {}))
+        elif ev_type == "content_block_delta":
+            delta = ev.get("delta", {})
+            if delta.get("type") == "text_delta":
+                content += delta.get("text", "")
+            elif delta.get("type") == "thinking_delta":
+                thinking += delta.get("thinking", "")
+            elif delta.get("type") == "input_json_delta":
+                if tool_calls:
+                    tool_calls[-1] += delta.get("partial_json", "")
+        elif ev_type == "content_block_start":
+            block = ev.get("content_block", {})
+            if block.get("type") in ("tool_use", "server_tool_use", "mcp_tool_use"):
+                tool_calls.append(f"{block.get('name', 'tool')}:")
+        elif ev_type == "message_delta":
+            delta = ev.get("delta", {})
+            stop_reason = delta.get("stop_reason", "")
+            usage.update(ev.get("usage", {}))
+
+    lines = [f"[{direction}] Stream complete"]
+    if model:
+        lines.append(f"  model: {model}")
+    if stop_reason:
+        lines.append(f"  stop_reason: {stop_reason}")
+    if usage:
+        lines.append(f"  usage: {json.dumps(usage)}")
+    lines.append(f"  events: {len(backend_events)} backend → {len(output_chunks)} output")
+    if thinking:
+        lines.append(f"  thinking: ({len(thinking)} chars) {thinking[:200]}...")
+    if content:
+        lines.append(f"  content: ({len(content)} chars) {content[:300]}...")
+    if tool_calls:
+        lines.append(f"  tool_calls: {', '.join(tc[:100] for tc in tool_calls)}")
+
+    logger.debug("\n".join(lines))
+
+
 async def _stream_response(
     anthropic_request: Dict[str, Any],
-    headers: Dict[str, str],
 ) -> AsyncIterator[str]:
-    """Stream request to Anthropic, convert SSE events to OpenAI chunks."""
-    async with httpx.AsyncClient(timeout=_config["timeout"]) as client:
-        try:
-            async with client.stream(
-                "POST",
-                _config["backend_url"],
-                json=anthropic_request,
-                headers=headers,
-            ) as resp:
-                if resp.status_code != 200:
-                    body = await resp.aread()
-                    body_str = body.decode(errors="replace")
-                    logger.error(
-                        "Backend (Anthropic) stream error %d:\n"
-                        "  URL: %s\n"
-                        "  Request body: %s\n"
-                        "  Response headers: %s\n"
-                        "  Response body: %s",
-                        resp.status_code,
-                        _config["backend_url"],
-                        json.dumps(anthropic_request, ensure_ascii=False)[:2000],
-                        dict(resp.headers),
-                        body_str[:2000],
-                    )
-                    error_chunk = {
-                        "error": {
-                            "message": f"Backend error {resp.status_code}: {body_str[:500]}",
-                            "type": "backend_error",
-                        }
-                    }
-                    yield f"data: {json.dumps(error_chunk)}\n\n"
-                    return
+    """Stream request to Anthropic using the SDK, convert events to OpenAI chunks."""
+    assert _client is not None, "Client not initialized. Call configure() first."
+    params = dict(anthropic_request)
+    model = params.pop("model")
+    messages = params.pop("messages")
+    max_tokens = params.pop("max_tokens")
+    params.pop("stream", None)
+    sdk_kwargs, extra = _extract_sdk_params(params)
 
-                # Parse Anthropic SSE and convert to OpenAI chunks
-                async for openai_chunk in _parse_and_convert_sse(resp):
+    try:
+        async with _client.messages.stream(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            **sdk_kwargs,
+            extra_body=extra if extra else None,
+        ) as stream:
+            converter = AnthropicSSEToOpenAIStream()
+            all_anthropic_events: list[Dict[str, Any]] = []
+            all_openai_chunks: list[Dict[str, Any]] = []
+
+            async for event in stream:
+                event_dict = event.model_dump() if hasattr(event, "model_dump") else {}
+                # SDK events have a 'type' attr directly
+                if not event_dict.get("type") and hasattr(event, "type"):
+                    event_dict["type"] = event.type
+                all_anthropic_events.append(event_dict)
+
+                openai_chunk = converter.process_event(event_dict)
+                if openai_chunk is not None:
+                    all_openai_chunks.append(openai_chunk)
                     yield f"data: {json.dumps(openai_chunk)}\n\n"
 
-                yield "data: [DONE]\n\n"
+            yield "data: [DONE]\n\n"
 
-        except httpx.TimeoutException:
-            error_chunk = {"error": {"message": "Backend request timed out", "type": "timeout"}}
-            yield f"data: {json.dumps(error_chunk)}\n\n"
-        except httpx.ConnectError as e:
-            error_chunk = {
-                "error": {"message": f"Backend connection error: {e}", "type": "connection_error"}
+            _log_stream_summary("Anthropic→OpenAI", all_anthropic_events, all_openai_chunks)
+
+    except anthropic.APITimeoutError:
+        error_chunk = {"error": {"message": "Backend request timed out", "type": "timeout"}}
+        yield f"data: {json.dumps(error_chunk)}\n\n"
+    except anthropic.APIConnectionError as e:
+        error_chunk = {
+            "error": {"message": f"Backend connection error: {e}", "type": "connection_error"}
+        }
+        yield f"data: {json.dumps(error_chunk)}\n\n"
+    except anthropic.APIStatusError as e:
+        logger.error(
+            "Backend (Anthropic) stream error %d:\n  URL: %s\n  Response: %s",
+            e.status_code,
+            _config["backend_base_url"],
+            str(e.body)[:2000],
+        )
+        error_chunk = {
+            "error": {
+                "message": f"Backend error {e.status_code}: {str(e.body)[:500]}",
+                "type": "backend_error",
             }
-            yield f"data: {json.dumps(error_chunk)}\n\n"
-
-
-async def _parse_and_convert_sse(
-    resp: httpx.Response,
-) -> AsyncIterator[Dict[str, Any]]:
-    """Parse Anthropic SSE stream and yield converted OpenAI chunks."""
-
-    async def _anthropic_events() -> AsyncIterator[Dict[str, Any]]:
-        """Parse raw SSE lines into Anthropic event dicts."""
-        async for line in resp.aiter_lines():
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("event:"):
-                # Event type line — we get the type from the data payload
-                continue
-            if line.startswith("data:"):
-                data_str = line[5:].strip()
-                if not data_str or data_str == "[DONE]":
-                    continue
-                try:
-                    yield json.loads(data_str)
-                except json.JSONDecodeError:
-                    logger.warning("Failed to parse SSE data: %s", data_str[:200])
-
-    async for chunk in OpenAIToAnthropicConverter.aconvert_stream(_anthropic_events()):
-        yield chunk
+        }
+        yield f"data: {json.dumps(error_chunk)}\n\n"
 
 
 # ── CLI entry point ─────────────────────────────────────────────────────
 
 
-def _normalize_anthropic_url(url: str) -> str:
+def _normalize_base_url(url: str) -> str:
     """
-    Normalize an Anthropic base URL to the messages endpoint.
+    Normalize a URL to a base URL suitable for the Anthropic SDK.
+
+    The SDK appends /v1/messages automatically, so strip that if present.
 
     Accepts:
-      - https://api.anthropic.com/v1                  -> append /messages
-      - https://api.anthropic.com/v1/                 -> append messages
-      - https://xxx.example.com/anthropic-native/v1   -> append /messages
-      - https://api.anthropic.com/v1/messages         -> keep as-is
+      - https://api.anthropic.com                       -> keep as-is
+      - https://api.anthropic.com/v1                    -> strip /v1
+      - https://api.anthropic.com/v1/messages           -> strip /v1/messages
+      - https://xxx.example.com/anthropic-native/v1     -> strip /v1
+      - https://xxx.example.com/anthropic-native        -> keep as-is
     """
     url = url.rstrip("/")
-    if not url.endswith("/messages"):
-        url = url + "/messages"
+    if url.endswith("/v1/messages"):
+        url = url[: -len("/v1/messages")]
+    elif url.endswith("/v1"):
+        url = url[: -len("/v1")]
     return url
 
 
@@ -445,7 +517,7 @@ def main():
         "--backend-url",
         default=os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
         help="Anthropic base URL or messages endpoint URL. "
-        "/messages is appended automatically if missing. "
+        "Automatically normalized for the SDK. "
         "(default: $ANTHROPIC_BASE_URL or https://api.anthropic.com/v1)",
     )
     parser.add_argument(
@@ -455,7 +527,7 @@ def main():
     )
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8001, help="Bind port (default: 8001)")
-    parser.add_argument("--timeout", type=int, default=300, help="Backend timeout in seconds")
+    parser.add_argument("--timeout", type=int, default=3600, help="Backend timeout in seconds")
     parser.add_argument("--default-max-tokens", type=int, default=4096)
     parser.add_argument(
         "--models",
@@ -482,7 +554,7 @@ def main():
         logger.error("No API key provided. Set --backend-api-key or $ANTHROPIC_API_KEY")
         sys.exit(1)
 
-    backend_url = _normalize_anthropic_url(args.backend_url)
+    backend_base_url = _normalize_base_url(args.backend_url)
 
     models = (
         [m.strip() for m in args.models.split(",") if m.strip()]
@@ -491,7 +563,7 @@ def main():
     )
 
     configure(
-        backend_url=backend_url,
+        backend_base_url=backend_base_url,
         backend_api_key=args.backend_api_key,
         timeout=args.timeout,
         default_max_tokens=args.default_max_tokens,
@@ -499,7 +571,7 @@ def main():
     )
 
     logger.info("Starting OpenAI-compatible server on %s:%d", args.host, args.port)
-    logger.info("Backend: %s", backend_url)
+    logger.info("Backend: %s", backend_base_url)
     logger.info("Swagger UI: http://%s:%d/docs", args.host, args.port)
     logger.info("Debug playground: http://%s:%d/debug", args.host, args.port)
 

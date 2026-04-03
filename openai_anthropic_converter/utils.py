@@ -59,7 +59,7 @@ def safe_json_dumps(obj: Any) -> str:
 
 def filter_schema_for_anthropic(schema: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Filter out unsupported fields from JSON schema for Anthropic's output_format API.
+    Filter out unsupported fields from JSON schema for Anthropic's output_config API.
 
     Anthropic doesn't support: maxItems/minItems, minimum/maximum,
     exclusiveMinimum/exclusiveMaximum, minLength/maxLength.

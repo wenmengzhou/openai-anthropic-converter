@@ -2,10 +2,10 @@
 Tests for OpenAI and Anthropic proxy servers.
 
 Uses httpx.AsyncClient with ASGITransport to test FastAPI apps directly,
-and unittest.mock to mock backend HTTP calls.
+and unittest.mock to mock backend SDK client calls.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -26,37 +26,23 @@ def setup_configs():
     anthropic_app.openapi_schema = None
 
     openai_configure(
-        backend_url="https://mock-anthropic.example.com/v1/messages",
+        backend_base_url="https://mock-anthropic.example.com",
         backend_api_key="test-anthropic-key",
         timeout=30,
         default_max_tokens=1024,
     )
     anthropic_configure(
-        backend_url="https://mock-openai.example.com/v1/chat/completions",
+        backend_base_url="https://mock-openai.example.com/v1",
         backend_api_key="test-openai-key",
         timeout=30,
     )
 
 
-def _mock_httpx_response(status_code: int, json_body: dict) -> httpx.Response:
-    """Create a mock httpx.Response with the given status and JSON body."""
-    return httpx.Response(
-        status_code=status_code,
-        json=json_body,
-        request=httpx.Request("POST", "https://mock.example.com"),
-    )
-
-
-def _make_mock_client(post_return=None, post_side_effect=None):
-    """Create a properly configured mock httpx.AsyncClient."""
-    mock_client = AsyncMock()
-    if post_side_effect:
-        mock_client.post = AsyncMock(side_effect=post_side_effect)
-    else:
-        mock_client.post = AsyncMock(return_value=post_return)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    return mock_client
+def _mock_sdk_response(json_body: dict) -> MagicMock:
+    """Create a mock SDK response object with model_dump() returning the dict."""
+    mock_resp = MagicMock()
+    mock_resp.model_dump.return_value = json_body
+    return mock_resp
 
 
 async def _call_openai_server(method, path, **kwargs):
@@ -73,37 +59,32 @@ async def _call_anthropic_server(method, path, **kwargs):
         return await getattr(client, method)(path, **kwargs)
 
 
-async def _patched_openai_call(mock_client, path, json_body):
-    """Make a request to OpenAI server with mocked backend.
+async def _patched_openai_call(mock_create, path, json_body):
+    """Make a request to OpenAI server with mocked Anthropic SDK client.
 
-    Creates the test ASGI client BEFORE patching httpx.AsyncClient,
-    so the patch only affects the server's backend calls.
+    mock_create is the AsyncMock that replaces _client.messages.create.
     """
     transport = httpx.ASGITransport(app=openai_app)
-    # Create test client before patch to avoid interference
-    client = httpx.AsyncClient(transport=transport, base_url="http://test")
-    try:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         with patch(
-            "openai_anthropic_converter.servers.openai_server.httpx.AsyncClient",
-            return_value=mock_client,
-        ):
+            "openai_anthropic_converter.servers.openai_server._client",
+        ) as mock_client:
+            mock_client.messages.create = mock_create
             return await client.post(path, json=json_body)
-    finally:
-        await client.aclose()
 
 
-async def _patched_anthropic_call(mock_client, path, json_body):
-    """Make a request to Anthropic server with mocked backend."""
+async def _patched_anthropic_call(mock_create, path, json_body):
+    """Make a request to Anthropic server with mocked OpenAI SDK client.
+
+    mock_create is the AsyncMock that replaces _client.chat.completions.create.
+    """
     transport = httpx.ASGITransport(app=anthropic_app)
-    client = httpx.AsyncClient(transport=transport, base_url="http://test")
-    try:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         with patch(
-            "openai_anthropic_converter.servers.anthropic_server.httpx.AsyncClient",
-            return_value=mock_client,
-        ):
+            "openai_anthropic_converter.servers.anthropic_server._client",
+        ) as mock_client:
+            mock_client.chat.completions.create = mock_create
             return await client.post(path, json=json_body)
-    finally:
-        await client.aclose()
 
 
 # ── OpenAI Server Tests ──────────────────────────────────────────────────
@@ -145,9 +126,9 @@ class TestOpenAIServerNonStreaming:
             "usage": {"input_tokens": 10, "output_tokens": 8},
         }
 
-        mock_client = _make_mock_client(post_return=_mock_httpx_response(200, anthropic_response))
+        mock_create = AsyncMock(return_value=_mock_sdk_response(anthropic_response))
         resp = await _patched_openai_call(
-            mock_client,
+            mock_create,
             "/v1/chat/completions",
             {
                 "model": "claude-sonnet-4-20250514",
@@ -183,9 +164,9 @@ class TestOpenAIServerNonStreaming:
             "usage": {"input_tokens": 20, "output_tokens": 30},
         }
 
-        mock_client = _make_mock_client(post_return=_mock_httpx_response(200, anthropic_response))
+        mock_create = AsyncMock(return_value=_mock_sdk_response(anthropic_response))
         resp = await _patched_openai_call(
-            mock_client,
+            mock_create,
             "/v1/chat/completions",
             {
                 "model": "claude-sonnet-4-20250514",
@@ -212,11 +193,21 @@ class TestOpenAIServerNonStreaming:
     @pytest.mark.anyio
     async def test_backend_error(self):
         """Test handling of backend error response."""
-        mock_client = _make_mock_client(
-            post_return=_mock_httpx_response(500, {"error": "Internal server error"})
+        import anthropic
+
+        mock_create = AsyncMock(
+            side_effect=anthropic.APIStatusError(
+                message="Internal server error",
+                response=httpx.Response(
+                    500,
+                    request=httpx.Request("POST", "https://mock.example.com"),
+                    json={"error": "Internal server error"},
+                ),
+                body={"error": "Internal server error"},
+            )
         )
         resp = await _patched_openai_call(
-            mock_client,
+            mock_create,
             "/v1/chat/completions",
             {
                 "model": "claude-sonnet-4-20250514",
@@ -229,9 +220,15 @@ class TestOpenAIServerNonStreaming:
     @pytest.mark.anyio
     async def test_backend_timeout(self):
         """Test handling of backend timeout."""
-        mock_client = _make_mock_client(post_side_effect=httpx.TimeoutException("timed out"))
+        import anthropic
+
+        mock_create = AsyncMock(
+            side_effect=anthropic.APITimeoutError(
+                request=httpx.Request("POST", "https://mock.example.com"),
+            )
+        )
         resp = await _patched_openai_call(
-            mock_client,
+            mock_create,
             "/v1/chat/completions",
             {
                 "model": "claude-sonnet-4-20250514",
@@ -244,9 +241,15 @@ class TestOpenAIServerNonStreaming:
     @pytest.mark.anyio
     async def test_backend_connect_error(self):
         """Test handling of backend connection error."""
-        mock_client = _make_mock_client(post_side_effect=httpx.ConnectError("Connection refused"))
+        import anthropic
+
+        mock_create = AsyncMock(
+            side_effect=anthropic.APIConnectionError(
+                request=httpx.Request("POST", "https://mock.example.com"),
+            )
+        )
         resp = await _patched_openai_call(
-            mock_client,
+            mock_create,
             "/v1/chat/completions",
             {
                 "model": "claude-sonnet-4-20250514",
@@ -309,9 +312,9 @@ class TestAnthropicServerNonStreaming:
             },
         }
 
-        mock_client = _make_mock_client(post_return=_mock_httpx_response(200, openai_response))
+        mock_create = AsyncMock(return_value=_mock_sdk_response(openai_response))
         resp = await _patched_anthropic_call(
-            mock_client,
+            mock_create,
             "/v1/messages",
             {
                 "model": "gpt-4o",
@@ -364,9 +367,9 @@ class TestAnthropicServerNonStreaming:
             },
         }
 
-        mock_client = _make_mock_client(post_return=_mock_httpx_response(200, openai_response))
+        mock_create = AsyncMock(return_value=_mock_sdk_response(openai_response))
         resp = await _patched_anthropic_call(
-            mock_client,
+            mock_create,
             "/v1/messages",
             {
                 "model": "gpt-4o",
@@ -395,11 +398,21 @@ class TestAnthropicServerNonStreaming:
     @pytest.mark.anyio
     async def test_backend_error_429(self):
         """Test handling of 429 backend error response."""
-        mock_client = _make_mock_client(
-            post_return=_mock_httpx_response(429, {"error": "Rate limited"})
+        import openai as openai_sdk
+
+        mock_create = AsyncMock(
+            side_effect=openai_sdk.APIStatusError(
+                message="Rate limited",
+                response=httpx.Response(
+                    429,
+                    request=httpx.Request("POST", "https://mock.example.com"),
+                    json={"error": "Rate limited"},
+                ),
+                body={"error": "Rate limited"},
+            )
         )
         resp = await _patched_anthropic_call(
-            mock_client,
+            mock_create,
             "/v1/messages",
             {
                 "model": "gpt-4o",
@@ -415,11 +428,21 @@ class TestAnthropicServerNonStreaming:
     @pytest.mark.anyio
     async def test_backend_error_401(self):
         """Test handling of 401 backend error response."""
-        mock_client = _make_mock_client(
-            post_return=_mock_httpx_response(401, {"error": "Unauthorized"})
+        import openai as openai_sdk
+
+        mock_create = AsyncMock(
+            side_effect=openai_sdk.APIStatusError(
+                message="Unauthorized",
+                response=httpx.Response(
+                    401,
+                    request=httpx.Request("POST", "https://mock.example.com"),
+                    json={"error": "Unauthorized"},
+                ),
+                body={"error": "Unauthorized"},
+            )
         )
         resp = await _patched_anthropic_call(
-            mock_client,
+            mock_create,
             "/v1/messages",
             {
                 "model": "gpt-4o",
@@ -435,11 +458,21 @@ class TestAnthropicServerNonStreaming:
     @pytest.mark.anyio
     async def test_backend_error_403(self):
         """Test handling of 403 backend error response."""
-        mock_client = _make_mock_client(
-            post_return=_mock_httpx_response(403, {"error": "Forbidden"})
+        import openai as openai_sdk
+
+        mock_create = AsyncMock(
+            side_effect=openai_sdk.APIStatusError(
+                message="Forbidden",
+                response=httpx.Response(
+                    403,
+                    request=httpx.Request("POST", "https://mock.example.com"),
+                    json={"error": "Forbidden"},
+                ),
+                body={"error": "Forbidden"},
+            )
         )
         resp = await _patched_anthropic_call(
-            mock_client,
+            mock_create,
             "/v1/messages",
             {
                 "model": "gpt-4o",
@@ -455,9 +488,15 @@ class TestAnthropicServerNonStreaming:
     @pytest.mark.anyio
     async def test_backend_timeout(self):
         """Test handling of backend timeout."""
-        mock_client = _make_mock_client(post_side_effect=httpx.TimeoutException("timed out"))
+        import openai as openai_sdk
+
+        mock_create = AsyncMock(
+            side_effect=openai_sdk.APITimeoutError(
+                request=httpx.Request("POST", "https://mock.example.com"),
+            )
+        )
         resp = await _patched_anthropic_call(
-            mock_client,
+            mock_create,
             "/v1/messages",
             {
                 "model": "gpt-4o",
@@ -473,9 +512,15 @@ class TestAnthropicServerNonStreaming:
     @pytest.mark.anyio
     async def test_backend_connect_error(self):
         """Test handling of backend connection error."""
-        mock_client = _make_mock_client(post_side_effect=httpx.ConnectError("Connection refused"))
+        import openai as openai_sdk
+
+        mock_create = AsyncMock(
+            side_effect=openai_sdk.APIConnectionError(
+                request=httpx.Request("POST", "https://mock.example.com"),
+            )
+        )
         resp = await _patched_anthropic_call(
-            mock_client,
+            mock_create,
             "/v1/messages",
             {
                 "model": "gpt-4o",
@@ -665,6 +710,53 @@ class TestOpenAPIAndDebug:
         req_schema = components["AnthropicMessagesRequest"]
         assert "model" in req_schema.get("properties", {})
         assert "messages" in req_schema.get("properties", {})
+
+
+# ── URL normalization tests ───────────────────────────────────────────────
+
+
+class TestURLNormalization:
+    """Test URL normalization for SDK base URLs."""
+
+    def test_openai_server_normalize_base_url(self):
+        """Test Anthropic URL normalization for SDK."""
+        from openai_anthropic_converter.servers.openai_server import _normalize_base_url
+
+        # Already a base URL
+        assert _normalize_base_url("https://api.anthropic.com") == "https://api.anthropic.com"
+        # Strip /v1/messages
+        assert (
+            _normalize_base_url("https://api.anthropic.com/v1/messages")
+            == "https://api.anthropic.com"
+        )
+        # Strip /v1
+        assert _normalize_base_url("https://api.anthropic.com/v1") == "https://api.anthropic.com"
+        # DashScope
+        assert (
+            _normalize_base_url("https://eval.dashscope.aliyuncs.com/apps/anthropic-native/v1")
+            == "https://eval.dashscope.aliyuncs.com/apps/anthropic-native"
+        )
+        # Trailing slash
+        assert _normalize_base_url("https://api.anthropic.com/v1/") == "https://api.anthropic.com"
+
+    def test_anthropic_server_normalize_base_url(self):
+        """Test OpenAI URL normalization for SDK."""
+        from openai_anthropic_converter.servers.anthropic_server import _normalize_base_url
+
+        # Already a base URL
+        assert _normalize_base_url("https://api.openai.com/v1") == "https://api.openai.com/v1"
+        # Strip /chat/completions
+        assert (
+            _normalize_base_url("https://api.openai.com/v1/chat/completions")
+            == "https://api.openai.com/v1"
+        )
+        # DashScope
+        assert (
+            _normalize_base_url("https://dashscope.aliyuncs.com/compatible-mode/v1")
+            == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
+        # Trailing slash
+        assert _normalize_base_url("https://api.openai.com/v1/") == "https://api.openai.com/v1"
 
 
 # ── Logging tests ────────────────────────────────────────────────────────

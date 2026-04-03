@@ -66,7 +66,7 @@ class AnthropicToOpenAIConverter:
         - System param -> system role message
         - Tool definition conversion with name truncation
         - thinking -> reasoning_effort mapping
-        - output_format -> response_format conversion
+        - output_config -> response_format conversion
         - metadata.user_id -> user mapping
 
         Args:

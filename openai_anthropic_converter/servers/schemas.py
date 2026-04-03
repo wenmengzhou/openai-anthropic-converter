@@ -389,6 +389,12 @@ class AnthropicOutputFormatSchema(BaseModel):
     schema_: Optional[Dict[str, Any]] = Field(None, alias="schema")
 
 
+class AnthropicOutputConfigSchema(BaseModel):
+    format: Optional[AnthropicOutputFormatSchema] = Field(
+        None, description="Output format config (e.g. json_schema)"
+    )
+
+
 # -- Anthropic Messages Request --
 
 
@@ -443,9 +449,9 @@ class AnthropicMessagesRequest(BaseModel):
         None,
         description="Extended thinking config. Maps to OpenAI reasoning_effort",
     )
-    output_format: Optional[AnthropicOutputFormatSchema] = Field(
+    output_config: Optional[AnthropicOutputConfigSchema] = Field(
         None,
-        description="Structured output format. Maps to OpenAI response_format",
+        description="Structured output config. output_config.format maps to OpenAI response_format",
     )
     context_management: Optional[Dict[str, Any]] = Field(
         None,

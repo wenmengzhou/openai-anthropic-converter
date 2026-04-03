@@ -161,7 +161,7 @@ class AnthropicRequest(TypedDict, total=False):
     stream: bool
     metadata: AnthropicMetadata
     thinking: AnthropicThinkingParam
-    output_format: AnthropicOutputFormat
+    output_config: Dict[str, Any]  # {"format": AnthropicOutputFormat}
     context_management: Dict[str, Any]
     cache_control: Dict[str, Any]
 

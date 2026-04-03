@@ -418,9 +418,9 @@ def convert_response_format(
     model: str,
 ) -> Dict[str, Any]:
     """
-    Convert OpenAI response_format to Anthropic output_format or JSON tool.
+    Convert OpenAI response_format to Anthropic output_config or JSON tool.
 
-    For newer models: returns {"output_format": {...}}
+    For newer models: returns {"output_config": {"format": {...}}}
     For older models: returns {"tools": [...], "tool_choice": {...}}
     """
     result: Dict[str, Any] = {}
@@ -448,17 +448,17 @@ def convert_response_format(
     if json_schema is None:
         return result
 
-    # Check if model supports native output_format
-    supports_output_format = any(sub in model for sub in OUTPUT_FORMAT_SUPPORTED_MODEL_SUBSTRINGS)
+    # Check if model supports native output_config
+    supports_output_config = any(sub in model for sub in OUTPUT_FORMAT_SUPPORTED_MODEL_SUBSTRINGS)
 
-    if supports_output_format:
+    if supports_output_config:
         # Resolve $ref/$defs and filter schema
         schema = copy.deepcopy(json_schema)
         defs = schema.pop("$defs", schema.pop("definitions", {}))
         if defs:
             unpack_defs(schema, defs)
         filtered = filter_schema_for_anthropic(schema)
-        result["output_format"] = {"type": "json_schema", "schema": filtered}
+        result["output_config"] = {"format": {"type": "json_schema", "schema": filtered}}
     else:
         # Use tool-based JSON mode
         tool = {
@@ -595,12 +595,12 @@ def convert_request(
         if seqs:
             result["stop_sequences"] = seqs
 
-    # response_format -> output_format or json tool
+    # response_format -> output_config or json tool
     response_format = request.pop("response_format", None)
     if response_format and isinstance(response_format, dict):
         fmt_result = convert_response_format(response_format, model)
-        if "output_format" in fmt_result:
-            result["output_format"] = fmt_result["output_format"]
+        if "output_config" in fmt_result:
+            result["output_config"] = fmt_result["output_config"]
         if "json_mode_tool" in fmt_result:
             tools_list = result.get("tools", [])
             tools_list.append(fmt_result["json_mode_tool"])

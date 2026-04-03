@@ -8,7 +8,7 @@ A standalone, bidirectional protocol converter between the OpenAI Chat Completio
 1. **OpenAI → Anthropic → OpenAI**: Accept OpenAI-format requests, forward to Anthropic backend, convert responses back
 2. **Anthropic → OpenAI → Anthropic**: Accept Anthropic-format requests, forward to OpenAI-compatible backend, convert responses back
 
-The core conversion library is zero-dependency (only `typing_extensions`). The optional proxy servers add FastAPI/httpx/uvicorn.
+The core conversion library is zero-dependency (only `typing_extensions`). The optional proxy servers use FastAPI/uvicorn and the official Anthropic/OpenAI Python SDKs for backend communication.
 
 ## Development Commands
 
@@ -48,7 +48,7 @@ mypy --ignore-missing-imports --no-strict-optional openai_anthropic_converter/
 
 ### Proxy Servers (`servers/`)
 
-Two FastAPI apps (`openai_server.py`, `anthropic_server.py`) that handle HTTP forwarding and SSE parsing. Each exposes `/docs`, `/redoc`, `/openapi.json`, `/debug` (interactive playground), and `/health`.
+Two FastAPI apps (`openai_server.py`, `anthropic_server.py`) that use official SDKs (`anthropic.AsyncAnthropic`, `openai.AsyncOpenAI`) for backend communication. SDK clients are created with `http_client=httpx.AsyncClient(trust_env=False)` to bypass system proxy and avoid SSE buffering. Each server exposes `/docs`, `/redoc`, `/openapi.json`, `/debug` (interactive playground), and `/health`.
 
 ### Types (`types/`)
 
@@ -64,13 +64,13 @@ TypedDicts for both wire formats — documentation/IDE support only, converters 
 
 **Bailian/DashScope compatibility**: Shims for Alibaba Cloud's platform are marked with `# [Bailian compat]` comments throughout the codebase (`enable_thinking`, `thinking_budget`, `enable_search`, `reasoning_content` in streaming deltas).
 
-**Schema filtering for Anthropic**: When using native `output_format` (Claude 4.5+), JSON schemas are recursively filtered to remove unsupported fields (minItems, maxItems, etc.) with constraint info moved to descriptions. `$ref`/`$defs` resolution handles circular references.
+**Schema filtering for Anthropic**: When using native `output_config` (Claude 4.5+), JSON schemas are recursively filtered to remove unsupported fields (minItems, maxItems, etc.) with constraint info moved to descriptions. `$ref`/`$defs` resolution handles circular references.
 
 ## Testing
 
-Tests use `httpx.ASGITransport` for in-process FastAPI testing with mocked backends via `unittest.mock.patch`. The mock client is created before patching to avoid interference with the test client.
+Tests use `httpx.ASGITransport` for in-process FastAPI testing. Backend SDK clients are mocked via `unittest.mock.patch` on the module-level `_client` variable, with SDK responses mocked via `MagicMock` with `.model_dump()`. SDK exceptions (`APIStatusError`, `APITimeoutError`, `APIConnectionError`) are used for error case testing.
 
-CI runs lint + test across Python 3.9, 3.11, 3.12.
+CI runs lint + test across Python 3.11, 3.12. Requires Python >=3.10.
 
 ## Code Style
 

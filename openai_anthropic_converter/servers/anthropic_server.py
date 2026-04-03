@@ -13,7 +13,7 @@ Features:
 Usage:
     # Forward to OpenAI API:
     python -m openai_anthropic_converter.servers.anthropic_server \
-        --backend-url https://api.openai.com/v1/chat/completions \
+        --backend-url https://api.openai.com/v1 \
         --backend-api-key $OPENAI_API_KEY \
         --port 8002
 
@@ -39,7 +39,8 @@ try:
 except ImportError:
     pass
 
-import httpx
+import httpx as _httpx
+import openai
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
@@ -103,16 +104,27 @@ app.openapi = _custom_openapi  # type: ignore[method-assign]
 
 # Global config — set via configure() or CLI args
 _config: Dict[str, Any] = {
-    "backend_url": "https://api.openai.com/v1/chat/completions",
+    "backend_base_url": "https://api.openai.com/v1",
     "backend_api_key": "",
-    "timeout": 300,
+    "timeout": 3600,
     "models": ["gpt-4o", "gpt-4o-mini"],
 }
 
+# OpenAI SDK client — initialized in configure()
+_client: openai.AsyncOpenAI | None = None
+
 
 def configure(**kwargs: Any) -> None:
-    """Update server configuration. Call before starting the server."""
+    """Update server configuration and (re)create the OpenAI client."""
+    global _client
     _config.update(kwargs)
+    _client = openai.AsyncOpenAI(
+        api_key=_config["backend_api_key"],
+        base_url=_config["backend_base_url"],
+        timeout=_config["timeout"],
+        # Bypass system proxy to avoid SSE buffering
+        http_client=_httpx.AsyncClient(trust_env=False),
+    )
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -219,7 +231,7 @@ async def debug_playground():
         "- `tools` → OpenAI tool definitions (names >64 chars truncated with hash)\n"
         "- `tool_choice` → OpenAI tool_choice (any→required)\n"
         "- `thinking` → reasoning_effort\n"
-        "- `output_format` → response_format\n"
+        "- `output_config` → response_format\n"
         "- `stop_sequences` → stop\n"
         "- `metadata.user_id` → user\n\n"
         "**Dropped params** (no OpenAI equivalent): `top_k`, `context_management`, `cache_control`"
@@ -265,67 +277,54 @@ async def messages(request: Request):
         json.dumps(openai_request, indent=2, ensure_ascii=False),
     )
 
-    # Build headers for OpenAI API
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {_config['backend_api_key']}",
-    }
-
     if is_stream:
         return StreamingResponse(
-            _stream_response(openai_request, headers, tool_name_mapping),
-            media_type="text/event-stream",
+            _stream_response(openai_request, tool_name_mapping),
+            media_type="text/event-stream; charset=utf-8",
             headers={
-                "Cache-Control": "no-cache",
+                "Cache-Control": "no-cache, no-transform",
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
+                "Transfer-Encoding": "chunked",
             },
         )
     else:
-        return await _non_stream_response(openai_request, headers, tool_name_mapping)
+        return await _non_stream_response(openai_request, tool_name_mapping)
 
 
 async def _non_stream_response(
     openai_request: Dict[str, Any],
-    headers: Dict[str, str],
     tool_name_mapping: Dict[str, str],
 ) -> JSONResponse:
     """Send non-streaming request to OpenAI and convert response."""
-    async with httpx.AsyncClient(timeout=_config["timeout"]) as client:
-        try:
-            resp = await client.post(
-                _config["backend_url"],
-                json=openai_request,
-                headers=headers,
-            )
-        except httpx.TimeoutException:
-            return _anthropic_error(504, "api_error", "Backend request timed out")
-        except httpx.ConnectError as e:
-            return _anthropic_error(502, "api_error", f"Backend connection error: {e}")
-
-    if resp.status_code != 200:
-        body = resp.text
-        logger.error(
-            "Backend (OpenAI) error %d:\n"
-            "  URL: %s\n"
-            "  Request body: %s\n"
-            "  Response headers: %s\n"
-            "  Response body: %s",
-            resp.status_code,
-            _config["backend_url"],
-            json.dumps(openai_request, ensure_ascii=False)[:2000],
-            dict(resp.headers),
-            body[:2000],
-        )
-        error_type = _map_status_to_error_type(resp.status_code)
-        return _anthropic_error(resp.status_code, error_type, body[:500])
+    assert _client is not None, "Client not initialized. Call configure() first."
+    params = dict(openai_request)
+    model = params.pop("model")
+    messages = params.pop("messages")
+    params.pop("stream", None)
+    params.pop("stream_options", None)
 
     try:
-        openai_response = resp.json()
-    except Exception:
-        logger.error("Invalid JSON from backend: %s", resp.text[:500])
-        return _anthropic_error(502, "api_error", "Invalid JSON from backend")
+        response = await _client.chat.completions.create(
+            model=model,
+            messages=messages,
+            extra_body=params,
+        )
+    except openai.APITimeoutError:
+        return _anthropic_error(504, "api_error", "Backend request timed out")
+    except openai.APIConnectionError as e:
+        return _anthropic_error(502, "api_error", f"Backend connection error: {e}")
+    except openai.APIStatusError as e:
+        logger.error(
+            "Backend (OpenAI) error %d:\n  URL: %s\n  Response: %s",
+            e.status_code,
+            _config["backend_base_url"],
+            str(e.body)[:2000],
+        )
+        error_type = _map_status_to_error_type(e.status_code)
+        return _anthropic_error(e.status_code, error_type, str(e.body)[:500])
 
+    openai_response = response.model_dump()
     logger.debug(
         "Backend (OpenAI) response:\n%s",
         json.dumps(openai_response, indent=2, ensure_ascii=False)[:3000],
@@ -348,93 +347,135 @@ async def _non_stream_response(
     return JSONResponse(content=anthropic_response)
 
 
+def _log_stream_summary(
+    direction: str,
+    backend_chunks: list[Dict[str, Any]],
+    output_events: list[Dict[str, Any]],
+) -> None:
+    """Log a structured summary of a completed stream."""
+    model = ""
+    content = ""
+    thinking = ""
+    tool_calls: list[str] = []
+    usage: Dict[str, Any] = {}
+    finish_reason = ""
+
+    for chunk in backend_chunks:
+        if not model:
+            model = chunk.get("model", "")
+        choices = chunk.get("choices", [])
+        if choices:
+            choice = choices[0]
+            delta = choice.get("delta", {})
+            if delta.get("content"):
+                content += delta["content"]
+            if delta.get("reasoning_content"):
+                thinking += delta["reasoning_content"]
+            if delta.get("tool_calls"):
+                for tc in delta["tool_calls"]:
+                    fn = tc.get("function", {})
+                    if fn.get("name"):
+                        tool_calls.append(f"{fn['name']}:")
+                    if fn.get("arguments") and tool_calls:
+                        tool_calls[-1] += fn["arguments"]
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+        if chunk.get("usage"):
+            usage.update(chunk["usage"])
+
+    lines = [f"[{direction}] Stream complete"]
+    if model:
+        lines.append(f"  model: {model}")
+    if finish_reason:
+        lines.append(f"  finish_reason: {finish_reason}")
+    if usage:
+        lines.append(f"  usage: {json.dumps(usage)}")
+    lines.append(f"  events: {len(backend_chunks)} backend → {len(output_events)} output")
+    if thinking:
+        lines.append(f"  thinking: ({len(thinking)} chars) {thinking[:200]}...")
+    if content:
+        lines.append(f"  content: ({len(content)} chars) {content[:300]}...")
+    if tool_calls:
+        lines.append(f"  tool_calls: {', '.join(tc[:100] for tc in tool_calls)}")
+
+    logger.debug("\n".join(lines))
+
+
 async def _stream_response(
     openai_request: Dict[str, Any],
-    headers: Dict[str, str],
     tool_name_mapping: Dict[str, str],
 ) -> AsyncIterator[str]:
-    """Stream request to OpenAI, convert chunks to Anthropic SSE events."""
-    async with httpx.AsyncClient(timeout=_config["timeout"]) as client:
-        try:
-            async with client.stream(
-                "POST",
-                _config["backend_url"],
-                json=openai_request,
-                headers=headers,
-            ) as resp:
-                if resp.status_code != 200:
-                    body = await resp.aread()
-                    body_str = body.decode(errors="replace")
-                    logger.error(
-                        "Backend (OpenAI) stream error %d:\n"
-                        "  URL: %s\n"
-                        "  Request body: %s\n"
-                        "  Response headers: %s\n"
-                        "  Response body: %s",
-                        resp.status_code,
-                        _config["backend_url"],
-                        json.dumps(openai_request, ensure_ascii=False)[:2000],
-                        dict(resp.headers),
-                        body_str[:2000],
-                    )
-                    error_event = {
-                        "type": "error",
-                        "error": {
-                            "type": _map_status_to_error_type(resp.status_code),
-                            "message": body_str[:500],
-                        },
-                    }
-                    yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
-                    return
+    """Stream request to OpenAI using the SDK, convert chunks to Anthropic SSE events."""
+    assert _client is not None, "Client not initialized. Call configure() first."
+    params = dict(openai_request)
+    model_name = params.pop("model")
+    messages = params.pop("messages")
+    params.pop("stream", None)
 
-                # Parse OpenAI SSE and convert to Anthropic events
-                model = openai_request.get("model", "unknown")
-                async for event in _parse_and_convert_sse(resp, model, tool_name_mapping):
-                    event_type = event.get("type", "unknown")
-                    yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
+    # Extract stream_options before passing to extra_body
+    stream_options = params.pop("stream_options", None)
 
-        except httpx.TimeoutException:
-            error_event = {
-                "type": "error",
-                "error": {"type": "api_error", "message": "Backend request timed out"},
-            }
-            yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
-        except httpx.ConnectError as e:
-            error_event = {
-                "type": "error",
-                "error": {"type": "api_error", "message": f"Backend connection error: {e}"},
-            }
-            yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+    try:
+        stream = await _client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            stream=True,
+            stream_options=stream_options,
+            extra_body=params,
+        )
 
+        all_openai_chunks: list[Dict[str, Any]] = []
+        all_anthropic_events: list[Dict[str, Any]] = []
 
-async def _parse_and_convert_sse(
-    resp: httpx.Response,
-    model: str,
-    tool_name_mapping: Dict[str, str],
-) -> AsyncIterator[Dict[str, Any]]:
-    """Parse OpenAI SSE stream and yield converted Anthropic events."""
+        async def _chunk_iter() -> AsyncIterator[Dict[str, Any]]:
+            """Iterate SDK stream, collecting chunks and yielding dicts."""
+            async for chunk in stream:
+                chunk_dict = chunk.model_dump()
+                all_openai_chunks.append(chunk_dict)
+                yield chunk_dict
 
-    async def _openai_chunks() -> AsyncIterator[Dict[str, Any]]:
-        """Parse raw SSE lines into OpenAI chunk dicts."""
-        async for line in resp.aiter_lines():
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("data:"):
-                data_str = line[5:].strip()
-                if not data_str or data_str == "[DONE]":
-                    continue
-                try:
-                    yield json.loads(data_str)
-                except json.JSONDecodeError:
-                    logger.warning("Failed to parse SSE data: %s", data_str[:200])
+        async for event in AnthropicToOpenAIConverter.aconvert_stream(
+            _chunk_iter(),
+            model=model_name,
+            tool_name_mapping=tool_name_mapping,
+        ):
+            all_anthropic_events.append(event)
+            event_type = event.get("type", "unknown")
+            yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
 
-    async for event in AnthropicToOpenAIConverter.aconvert_stream(
-        _openai_chunks(),
-        model=model,
-        tool_name_mapping=tool_name_mapping,
-    ):
-        yield event
+        _log_stream_summary(
+            "OpenAI→Anthropic",
+            all_openai_chunks,
+            all_anthropic_events,
+        )
+
+    except openai.APITimeoutError:
+        error_event = {
+            "type": "error",
+            "error": {"type": "api_error", "message": "Backend request timed out"},
+        }
+        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+    except openai.APIConnectionError as e:
+        error_event = {
+            "type": "error",
+            "error": {"type": "api_error", "message": f"Backend connection error: {e}"},
+        }
+        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+    except openai.APIStatusError as e:
+        logger.error(
+            "Backend (OpenAI) stream error %d:\n  URL: %s\n  Response: %s",
+            e.status_code,
+            _config["backend_base_url"],
+            str(e.body)[:2000],
+        )
+        error_event = {
+            "type": "error",
+            "error": {
+                "type": _map_status_to_error_type(e.status_code),
+                "message": str(e.body)[:500],
+            },
+        }
+        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
 
 
 # ── Count tokens endpoint (stub) ───────────────────────────────────────
@@ -525,19 +566,21 @@ def _map_status_to_error_type(status_code: int) -> str:
 # ── CLI entry point ─────────────────────────────────────────────────────
 
 
-def _normalize_openai_url(url: str) -> str:
+def _normalize_base_url(url: str) -> str:
     """
-    Normalize an OpenAI-compatible base URL to the chat completions endpoint.
+    Normalize a URL to a base URL suitable for the OpenAI SDK.
+
+    The SDK appends /chat/completions automatically, so strip that if present.
 
     Accepts:
-      - https://api.openai.com/v1                     -> append /chat/completions
-      - https://api.openai.com/v1/                    -> append chat/completions
-      - https://dashscope.aliyuncs.com/compatible-mode/v1 -> append /chat/completions
-      - https://api.openai.com/v1/chat/completions    -> keep as-is
+      - https://api.openai.com/v1                          -> keep as-is
+      - https://api.openai.com/v1/chat/completions          -> strip /chat/completions
+      - https://dashscope.aliyuncs.com/compatible-mode/v1   -> keep as-is
+      - https://dashscope.aliyuncs.com/compatible-mode/v1/  -> strip trailing /
     """
     url = url.rstrip("/")
-    if not url.endswith("/chat/completions"):
-        url = url + "/chat/completions"
+    if url.endswith("/chat/completions"):
+        url = url[: -len("/chat/completions")]
     return url
 
 
@@ -549,7 +592,7 @@ def main():
         "--backend-url",
         default=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         help="OpenAI base URL or chat completions URL. "
-        "/chat/completions is appended automatically if missing. "
+        "Automatically normalized for the SDK. "
         "(default: $OPENAI_BASE_URL or https://api.openai.com/v1)",
     )
     parser.add_argument(
@@ -559,7 +602,7 @@ def main():
     )
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8002, help="Bind port (default: 8002)")
-    parser.add_argument("--timeout", type=int, default=300, help="Backend timeout in seconds")
+    parser.add_argument("--timeout", type=int, default=3600, help="Backend timeout in seconds")
     parser.add_argument(
         "--models",
         default=os.environ.get("ANTHROPIC_SERVER_MODELS", os.environ.get("MODELS", "")),
@@ -585,7 +628,7 @@ def main():
         logger.error("No API key provided. Set --backend-api-key or $OPENAI_API_KEY")
         sys.exit(1)
 
-    backend_url = _normalize_openai_url(args.backend_url)
+    backend_base_url = _normalize_base_url(args.backend_url)
 
     models = (
         [m.strip() for m in args.models.split(",") if m.strip()]
@@ -594,14 +637,14 @@ def main():
     )
 
     configure(
-        backend_url=backend_url,
+        backend_base_url=backend_base_url,
         backend_api_key=args.backend_api_key,
         timeout=args.timeout,
         models=models,
     )
 
     logger.info("Starting Anthropic-compatible server on %s:%d", args.host, args.port)
-    logger.info("Backend: %s", backend_url)
+    logger.info("Backend: %s", backend_base_url)
     logger.info("Swagger UI: http://%s:%d/docs", args.host, args.port)
     logger.info("Debug playground: http://%s:%d/debug", args.host, args.port)
 

@@ -600,8 +600,8 @@ class TestEdgeCases:
             },
         }
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
-        assert "output_format" in result
-        assert result["output_format"]["type"] == "json_schema"
+        assert "output_config" in result
+        assert result["output_config"]["format"]["type"] == "json_schema"
 
     def test_max_completion_tokens_alias(self):
         """max_completion_tokens should work as alias for max_tokens."""
@@ -1137,10 +1137,10 @@ class TestEdgeCases:
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
         assert result["messages"][0]["role"] == "user"
 
-    def test_schema_filtering_for_output_format(self):
+    def test_schema_filtering_for_output_config(self):
         """JSON schema should have unsupported fields filtered for Anthropic."""
         openai_req = {
-            "model": "claude-sonnet-4.5-20250514",  # Supports output_format
+            "model": "claude-sonnet-4.5-20250514",  # Supports output_config
             "messages": [{"role": "user", "content": "Generate"}],
             "response_format": {
                 "type": "json_schema",
@@ -1160,8 +1160,8 @@ class TestEdgeCases:
             },
         }
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
-        assert "output_format" in result
-        schema = result["output_format"]["schema"]
+        assert "output_config" in result
+        schema = result["output_config"]["format"]["schema"]
         props = schema["properties"]["count"]
         # minimum/maximum should be removed and added to description
         assert "minimum" not in props
@@ -1169,7 +1169,7 @@ class TestEdgeCases:
         assert "description" in props
 
     def test_tool_based_json_mode_for_old_model(self):
-        """Older models should use tool-based JSON mode instead of output_format."""
+        """Older models should use tool-based JSON mode instead of output_config."""
         openai_req = {
             "model": "claude-3-opus-20240229",  # Older model
             "messages": [{"role": "user", "content": "Generate"}],
@@ -1182,7 +1182,7 @@ class TestEdgeCases:
             },
         }
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
-        assert "output_format" not in result
+        assert "output_config" not in result
         # Should have the JSON tool added
         tool_names = [t.get("name") for t in result.get("tools", [])]
         assert "json_tool_call" in tool_names
@@ -1254,8 +1254,8 @@ class TestEdgeCases:
             },
         }
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
-        assert "output_format" in result
-        schema = result["output_format"]["schema"]
+        assert "output_config" in result
+        schema = result["output_config"]["format"]["schema"]
         # $ref should be resolved
         item_prop = schema["properties"]["item"]
         assert "$ref" not in item_prop
@@ -1361,14 +1361,14 @@ class TestEdgeCases:
         assert "thinking" not in result
 
     def test_response_format_text_type_ignored(self):
-        """response_format with type='text' should not produce output_format."""
+        """response_format with type='text' should not produce output_config."""
         openai_req = {
             "model": "test",
             "messages": [{"role": "user", "content": "Hi"}],
             "response_format": {"type": "text"},
         }
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
-        assert "output_format" not in result
+        assert "output_config" not in result
         assert "tools" not in result
 
     def test_tool_with_non_object_schema(self):
@@ -1425,8 +1425,8 @@ class TestEdgeCases:
         }
         # Should not hang or raise RecursionError
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
-        assert "output_format" in result
-        schema = result["output_format"]["schema"]
+        assert "output_config" in result
+        schema = result["output_config"]["format"]["schema"]
         # The root ref should be expanded
         assert schema["properties"]["root"]["type"] == "object"
 
@@ -1459,7 +1459,7 @@ class TestEdgeCases:
             },
         }
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
-        schema = result["output_format"]["schema"]
+        schema = result["output_config"]["format"]["schema"]
         # Both refs should be expanded
         assert schema["properties"]["start"]["type"] == "object"
         assert schema["properties"]["end"]["type"] == "object"
@@ -1886,7 +1886,7 @@ class TestEdgeCases:
             },
         }
         result = OpenAIToAnthropicConverter.convert_request(openai_req)
-        schema = result["output_format"]["schema"]
+        schema = result["output_config"]["format"]["schema"]
         # Both refs should be fully expanded
         assert schema["properties"]["source"]["type"] == "object"
         assert schema["properties"]["sink"]["type"] == "object"

@@ -150,7 +150,24 @@ class TestRequestConversion:
         result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
         assert result["stop"] == ["END"]
 
-    def test_output_format_to_response_format(self):
+    def test_output_config_to_response_format(self):
+        anthropic_req = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "output_config": {
+                "format": {
+                    "type": "json_schema",
+                    "schema": {"type": "object", "properties": {"name": {"type": "string"}}},
+                },
+            },
+            "max_tokens": 1024,
+        }
+        result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
+        assert result["response_format"]["type"] == "json_schema"
+        assert "json_schema" in result["response_format"]
+
+    def test_output_format_legacy_to_response_format(self):
+        """Legacy output_format (without output_config wrapper) should still work."""
         anthropic_req = {
             "model": "claude-sonnet-4-20250514",
             "messages": [{"role": "user", "content": "Hi"}],
@@ -1441,12 +1458,12 @@ class TestEdgeCases:
         assert "web_search_options" in result
         assert "tools" not in result
 
-    def test_output_format_non_json_schema_ignored(self):
-        """output_format with non-json_schema type should be ignored."""
+    def test_output_config_non_json_schema_ignored(self):
+        """output_config.format with non-json_schema type should be ignored."""
         anthropic_req = {
             "model": "test",
             "messages": [{"role": "user", "content": "Hi"}],
-            "output_format": {"type": "text"},
+            "output_config": {"format": {"type": "text"}},
             "max_tokens": 1024,
         }
         result, _ = AnthropicToOpenAIConverter.convert_request(anthropic_req)
@@ -2076,17 +2093,19 @@ class TestRound4EdgeCases:
         tool_block = [b for b in result["content"] if b["type"] == "tool_use"][0]
         assert tool_block["name"] == long_name
 
-    def test_request_output_format_conversion(self):
-        """Anthropic output_format should convert to OpenAI response_format."""
+    def test_request_output_config_conversion(self):
+        """Anthropic output_config should convert to OpenAI response_format."""
         anthropic_req = {
             "model": "test",
             "messages": [{"role": "user", "content": "Hi"}],
             "max_tokens": 100,
-            "output_format": {
-                "type": "json_schema",
-                "schema": {
-                    "type": "object",
-                    "properties": {"name": {"type": "string"}},
+            "output_config": {
+                "format": {
+                    "type": "json_schema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                    },
                 },
             },
         }

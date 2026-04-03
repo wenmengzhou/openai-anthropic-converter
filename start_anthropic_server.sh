@@ -12,4 +12,4 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-python -m openai_anthropic_converter.servers.anthropic_server "$@"
+python -m openai_anthropic_converter.servers.anthropic_server --log-level debug "$@"

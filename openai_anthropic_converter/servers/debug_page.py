@@ -24,11 +24,13 @@ OPENAI_EXAMPLES = {
             {"role": "user", "content": "And the integral?"},
         ],
         "max_tokens": 256,
+        "stream": True,
     },
     "Tool Use": {
         "model": "__MODEL__",
         "messages": [{"role": "user", "content": "What's the weather in Tokyo?"}],
         "max_tokens": 1024,
+        "stream": True,
         "tools": [
             {
                 "type": "function",
@@ -57,6 +59,7 @@ OPENAI_EXAMPLES = {
             {"role": "user", "content": "List 3 programming languages with their year of creation"}
         ],
         "max_tokens": 1024,
+        "stream": True,
         "response_format": {
             "type": "json_schema",
             "json_schema": {
@@ -92,11 +95,13 @@ OPENAI_EXAMPLES = {
         "messages": [{"role": "user", "content": "What is 127 * 389? Think step by step."}],
         "max_tokens": 4096,
         "reasoning_effort": "high",
+        "stream": True,
     },
     "[Bailian] Thinking + Search": {
         "model": "__MODEL__",
         "messages": [{"role": "user", "content": "What happened in tech news today?"}],
         "max_tokens": 2048,
+        "stream": True,
         "enable_thinking": True,
         "thinking_budget": 5000,
         "enable_search": True,
@@ -122,6 +127,7 @@ ANTHROPIC_EXAMPLES = {
         "system": "You are a helpful math tutor. Be concise.",
         "messages": [{"role": "user", "content": "What is the derivative of x^2?"}],
         "max_tokens": 256,
+        "stream": True,
     },
     "Multi-modal (Image URL)": {
         "model": "__MODEL__",
@@ -141,11 +147,13 @@ ANTHROPIC_EXAMPLES = {
             }
         ],
         "max_tokens": 1024,
+        "stream": True,
     },
     "Tool Use": {
         "model": "__MODEL__",
         "messages": [{"role": "user", "content": "What's the weather in Tokyo?"}],
         "max_tokens": 1024,
+        "stream": True,
         "tools": [
             {
                 "name": "get_weather",
@@ -164,6 +172,7 @@ ANTHROPIC_EXAMPLES = {
         "model": "__MODEL__",
         "messages": [{"role": "user", "content": "What is 127 * 389? Think step by step."}],
         "max_tokens": 4096,
+        "stream": True,
         "thinking": {"type": "enabled", "budget_tokens": 10000},
     },
     "Streaming": {
@@ -279,21 +288,30 @@ def get_debug_html(server_type: str, models: list[str] | None = None) -> str:
   .status-bar .ok {{ color: var(--green); }}
   .status-bar .err {{ color: var(--red); }}
   .status-bar .pending {{ color: var(--orange); }}
-  .jt {{ font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8125rem; line-height: 1.5; }}
-  .jt .k {{ color: #79c0ff; }}
-  .jt .s {{ color: #a5d6ff; }}
-  .jt .n {{ color: #d2a8ff; }}
-  .jt .b {{ color: #ff7b72; }}
-  .jt .nl {{ color: var(--muted); }}
+  .jt {{ font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8125rem; line-height: 1.6; }}
+  .jt .k {{ color: #c9d1d9; font-weight: 500; }}
+  .jt .s {{ color: #3fb950; }}
+  .jt .n {{ color: #79c0ff; }}
+  .jt .b {{ color: #d29922; }}
+  .jt .nl {{ color: var(--muted); font-style: italic; }}
+  .jt .jt-row {{ position: relative; }}
   .jt .tog {{
-    display: inline-block; width: 1em; text-align: center; cursor: pointer;
-    color: var(--muted); user-select: none; font-size: 0.75rem;
+    display: inline-block; width: 1.2em; text-align: center; cursor: pointer;
+    color: var(--muted); user-select: none; font-size: 0.7rem; vertical-align: middle;
   }}
   .jt .tog:hover {{ color: var(--accent); }}
+  .jt .tog-placeholder {{ display: inline-block; width: 1.2em; }}
+  .jt .copy-btn {{
+    display: inline-block; cursor: pointer; color: var(--muted); user-select: none;
+    font-size: 0.75rem; margin-left: 6px; opacity: 0; transition: opacity 0.15s;
+    vertical-align: middle; background: none; border: none; padding: 0 2px;
+  }}
+  .jt .jt-row:hover > .copy-btn, .jt .copy-btn:hover {{ opacity: 1; }}
+  .jt .copy-btn:hover {{ color: var(--accent); }}
   .jt .collapsed > .inner {{ display: none; }}
   .jt .collapsed > .close-bracket {{ display: none; }}
   .jt .collapsed > .ellipsis {{ display: inline; }}
-  .jt .ellipsis {{ display: none; color: var(--muted); }}
+  .jt .ellipsis {{ display: none; color: var(--muted); font-style: italic; }}
   .tab {{ border-radius: 4px 4px 0 0; padding: 3px 12px; font-size: 0.75rem; border-bottom: 2px solid transparent; }}
   .tab.active {{ color: var(--accent); border-bottom-color: var(--accent); background: var(--bg); }}
   .stream-chunk {{ border-bottom: 1px dashed var(--border); padding-bottom: 4px; margin-bottom: 4px; }}
@@ -464,12 +482,29 @@ async function sendRequest() {{
     const ct = resp.headers.get('content-type') || '';
 
     if (ct.includes('text/event-stream')) {{
-      // Streaming — always populate both Text and JSON views
+      // Streaming — Text view shows live typewriter, JSON view shows assembled message at end
       statusEl.textContent = resp.status + ' Streaming...';
       statusEl.className = 'status pending';
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+
+      // JSON view: show streaming indicator
+      jsonArea.innerHTML = '<div style="color:var(--muted);padding:8px;">Streaming...</div>';
+
+      // Accumulator for assembling the complete response
+      const assembled = {{
+        // Common
+        id: null, model: null, created: null,
+        // OpenAI assembled message
+        oai: null, oaiContent: '', oaiThinking: '', oaiReasoningContent: '',
+        oaiToolCalls: {{}}, oaiFinishReason: null,
+        // Anthropic assembled
+        anth: null, anthBlocks: [], anthCurrentBlock: null,
+        anthStopReason: null,
+        // Usage
+        usage: null
+      }};
 
       // Text view state
       area.innerHTML = '<div class="stream-text" id="streamTextArea"></div>';
@@ -488,33 +523,31 @@ async function sendRequest() {{
         buffer = lines.pop() || '';
         for (const line of lines) {{
           const trimmed = line.trim();
-          if (!trimmed) continue;
-          if (trimmed === 'data: [DONE]') {{
-            jsonArea.innerHTML += '<div class="stream-chunk" style="color:var(--green)">— stream done —</div>';
-            continue;
-          }}
+          if (!trimmed || trimmed === 'data: [DONE]') continue;
           if (trimmed.startsWith('data: ')) {{
             const json = trimmed.slice(6);
             rawResponse += json + '\\n';
 
-            // JSON view: append formatted chunk
-            let display = json;
-            try {{ display = JSON.stringify(JSON.parse(json), null, 2); }} catch {{}}
-            jsonArea.innerHTML += '<div class="stream-chunk">' + renderJson(display) + '</div>';
-            jsonArea.scrollTop = jsonArea.scrollHeight;
-
-            // Text view: extract and append content with typewriter effect
             try {{
               const chunk = JSON.parse(json);
-              // OpenAI format: choices[0].delta
+
+              // === OpenAI format ===
               const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta;
               if (delta) {{
+                if (!assembled.id) {{
+                  assembled.id = chunk.id;
+                  assembled.model = chunk.model;
+                  assembled.created = chunk.created;
+                  assembled.oai = true;
+                }}
                 if (delta.content) {{
+                  assembled.oaiContent += delta.content;
                   cursorEl.remove();
                   textEl.appendChild(document.createTextNode(delta.content));
                   textEl.appendChild(cursorEl);
                 }}
                 if (delta.reasoning_content) {{
+                  assembled.oaiReasoningContent += delta.reasoning_content;
                   if (!thinkEl) {{
                     cursorEl.remove();
                     thinkEl = document.createElement('div');
@@ -529,6 +562,7 @@ async function sendRequest() {{
                 if (delta.thinking_blocks) {{
                   delta.thinking_blocks.forEach(tb => {{
                     if (tb.thinking) {{
+                      assembled.oaiThinking += tb.thinking;
                       if (!thinkEl) {{
                         cursorEl.remove();
                         thinkEl = document.createElement('div');
@@ -545,13 +579,19 @@ async function sendRequest() {{
                 if (delta.tool_calls) {{
                   delta.tool_calls.forEach(tc => {{
                     const idx = tc.index || 0;
+                    if (!assembled.oaiToolCalls[idx]) {{
+                      assembled.oaiToolCalls[idx] = {{ id: tc.id || '', name: '', arguments: '' }};
+                    }}
+                    if (tc.function) {{
+                      if (tc.function.name) assembled.oaiToolCalls[idx].name = tc.function.name;
+                      if (tc.function.arguments) assembled.oaiToolCalls[idx].arguments += tc.function.arguments;
+                    }}
                     if (!toolEls[idx]) {{
                       thinkEl = null;
                       cursorEl.remove();
                       const el = document.createElement('div');
                       el.className = 'tool-block';
-                      const name = (tc.function && tc.function.name) || 'tool_call';
-                      el.innerHTML = '<div class="tool-label">Tool: ' + name + '</div>';
+                      el.innerHTML = '<div class="tool-label">Tool: ' + (tc.function && tc.function.name || 'tool_call') + '</div>';
                       el.appendChild(document.createElement('span'));
                       textEl.appendChild(el);
                       textEl.appendChild(cursorEl);
@@ -563,15 +603,44 @@ async function sendRequest() {{
                   }});
                 }}
                 if (chunk.choices[0].finish_reason) {{
+                  assembled.oaiFinishReason = chunk.choices[0].finish_reason;
                   thinkEl = null; toolEls = {{}};
                 }}
               }}
-              // Anthropic format
+
+              // === Anthropic format ===
+              if (chunk.type === 'message_start' && chunk.message) {{
+                assembled.anth = true;
+                assembled.id = chunk.message.id;
+                assembled.model = chunk.message.model;
+                assembled.usage = chunk.message.usage || {{}};
+              }}
+              if (chunk.type === 'content_block_start' && chunk.content_block) {{
+                const cb = {{ ...chunk.content_block }};
+                assembled.anthCurrentBlock = cb;
+                assembled.anthBlocks.push(cb);
+                if (cb.type === 'tool_use') {{
+                  cursorEl.remove();
+                  thinkEl = null;
+                  const el = document.createElement('div');
+                  el.className = 'tool-block';
+                  el.innerHTML = '<div class="tool-label">Tool: ' + (cb.name || 'tool_call') + '</div>';
+                  el.appendChild(document.createElement('span'));
+                  textEl.appendChild(el);
+                  textEl.appendChild(cursorEl);
+                }}
+                if (cb.type === 'thinking') {{ cb.thinking = ''; }}
+                if (cb.type === 'text') {{ cb.text = ''; }}
+                if (cb.type === 'tool_use') {{ cb._inputJson = ''; }}
+              }}
               if (chunk.type === 'content_block_delta' && chunk.delta) {{
+                const cb = assembled.anthCurrentBlock;
                 cursorEl.remove();
                 if (chunk.delta.type === 'text_delta' && chunk.delta.text) {{
+                  if (cb) cb.text = (cb.text || '') + chunk.delta.text;
                   textEl.appendChild(document.createTextNode(chunk.delta.text));
                 }} else if (chunk.delta.type === 'thinking_delta' && chunk.delta.thinking) {{
+                  if (cb) cb.thinking = (cb.thinking || '') + chunk.delta.thinking;
                   if (!thinkEl) {{
                     thinkEl = document.createElement('div');
                     thinkEl.className = 'thinking-block';
@@ -581,42 +650,84 @@ async function sendRequest() {{
                   }}
                   thinkEl.querySelector('span').textContent += chunk.delta.thinking;
                 }} else if (chunk.delta.type === 'input_json_delta' && chunk.delta.partial_json) {{
+                  if (cb) cb._inputJson = (cb._inputJson || '') + chunk.delta.partial_json;
                   const lastTool = textEl.querySelector('.tool-block:last-of-type span');
                   if (lastTool) lastTool.textContent += chunk.delta.partial_json;
                 }}
                 textEl.appendChild(cursorEl);
               }}
-              if (chunk.type === 'content_block_start' && chunk.content_block) {{
-                if (chunk.content_block.type === 'tool_use') {{
-                  cursorEl.remove();
-                  thinkEl = null;
-                  const el = document.createElement('div');
-                  el.className = 'tool-block';
-                  el.innerHTML = '<div class="tool-label">Tool: ' + (chunk.content_block.name || 'tool_call') + '</div>';
-                  el.appendChild(document.createElement('span'));
-                  textEl.appendChild(el);
-                  textEl.appendChild(cursorEl);
+              if (chunk.type === 'content_block_stop') {{
+                const cb = assembled.anthCurrentBlock;
+                if (cb && cb.type === 'tool_use' && cb._inputJson) {{
+                  try {{ cb.input = JSON.parse(cb._inputJson); }} catch {{ cb.input = cb._inputJson; }}
+                  delete cb._inputJson;
                 }}
+                assembled.anthCurrentBlock = null;
+                thinkEl = null;
               }}
-              // Extract usage
-              const usage = chunk.usage || (chunk.choices && chunk.choices[0] && chunk.choices[0].usage);
-              if (usage) {{
+              if (chunk.type === 'message_delta' && chunk.delta) {{
+                assembled.anthStopReason = chunk.delta.stop_reason;
+                if (chunk.usage) assembled.usage = {{ ...(assembled.usage || {{}}), ...chunk.usage }};
+              }}
+
+              // Extract usage (OpenAI)
+              const usg = chunk.usage || (chunk.choices && chunk.choices[0] && chunk.choices[0].usage);
+              if (usg) {{
+                assembled.usage = {{ ...(assembled.usage || {{}}), ...usg }};
                 const parts = [];
-                if (usage.prompt_tokens !== undefined) parts.push('in:' + usage.prompt_tokens);
-                if (usage.completion_tokens !== undefined) parts.push('out:' + usage.completion_tokens);
-                if (usage.input_tokens !== undefined) parts.push('in:' + usage.input_tokens);
-                if (usage.output_tokens !== undefined) parts.push('out:' + usage.output_tokens);
+                if (usg.prompt_tokens !== undefined) parts.push('in:' + usg.prompt_tokens);
+                if (usg.completion_tokens !== undefined) parts.push('out:' + usg.completion_tokens);
+                if (usg.input_tokens !== undefined) parts.push('in:' + usg.input_tokens);
+                if (usg.output_tokens !== undefined) parts.push('out:' + usg.output_tokens);
                 if (parts.length) tokenEl.textContent = 'Tokens: ' + parts.join(' ');
               }}
             }} catch {{}}
-          }} else if (trimmed.startsWith('event: ')) {{
-            jsonArea.innerHTML += '<div style="color:var(--muted)">event: ' + trimmed.slice(7) + '</div>';
           }}
           area.scrollTop = area.scrollHeight;
         }}
       }}
       cursorEl.remove();
       rawTextContent = textEl.textContent;
+
+      // Build assembled JSON for the JSON view
+      let assembledJson = null;
+      if (assembled.oai) {{
+        const msg = {{ role: 'assistant' }};
+        if (assembled.oaiContent) msg.content = assembled.oaiContent;
+        if (assembled.oaiReasoningContent) msg.reasoning_content = assembled.oaiReasoningContent;
+        if (assembled.oaiThinking) msg.thinking_blocks = [{{ type: 'thinking', thinking: assembled.oaiThinking }}];
+        const tcKeys = Object.keys(assembled.oaiToolCalls);
+        if (tcKeys.length) {{
+          msg.tool_calls = tcKeys.map(idx => {{
+            const tc = assembled.oaiToolCalls[idx];
+            return {{ id: tc.id, type: 'function', function: {{ name: tc.name, arguments: tc.arguments }} }};
+          }});
+        }}
+        assembledJson = {{
+          id: assembled.id, object: 'chat.completion', created: assembled.created,
+          model: assembled.model,
+          choices: [{{ index: 0, message: msg, finish_reason: assembled.oaiFinishReason }}],
+        }};
+        if (assembled.usage) assembledJson.usage = assembled.usage;
+      }} else if (assembled.anth) {{
+        assembledJson = {{
+          id: assembled.id, type: 'message', role: 'assistant',
+          model: assembled.model,
+          content: assembled.anthBlocks.map(b => {{
+            const block = {{ ...b }};
+            delete block._inputJson;
+            return block;
+          }}),
+          stop_reason: assembled.anthStopReason,
+        }};
+        if (assembled.usage) assembledJson.usage = assembled.usage;
+      }}
+
+      if (assembledJson) {{
+        rawResponse = JSON.stringify(assembledJson, null, 2);
+        jsonArea.innerHTML = renderJson(assembledJson);
+      }}
+
       const totalElapsed = ((performance.now() - startTime) / 1000).toFixed(2);
       statusEl.textContent = resp.status + ' Done';
       statusEl.className = 'status ok';
@@ -772,42 +883,45 @@ function renderTextView(parts, area) {{
 
 function esc(s) {{ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }}
 
-function renderJsonToHtml(val, indent) {{
+function renderJsonToHtml(val, indent, key) {{
   indent = indent || 0;
   const pad = '  '.repeat(indent);
   const pad1 = '  '.repeat(indent + 1);
-  if (val === null) return '<span class="nl">null</span>';
-  if (typeof val === 'boolean') return '<span class="b">' + val + '</span>';
-  if (typeof val === 'number') return '<span class="n">' + val + '</span>';
-  if (typeof val === 'string') return '<span class="s">"' + esc(val) + '"</span>';
-  if (Array.isArray(val)) {{
-    if (val.length === 0) return '[]';
-    const items = val.map((v, i) => {{
-      const comma = i < val.length - 1 ? ',' : '';
-      return pad1 + renderJsonToHtml(v, indent + 1) + comma;
-    }});
-    const id = 'jn' + (++renderJsonToHtml._id);
-    return '<span id="' + id + '"><span class="tog" onclick="toggleJson(\\''+id+'\\')">-</span>[\\n'
-      + '<span class="inner">' + items.join('\\n') + '\\n' + pad + '</span>'
-      + '<span class="ellipsis"> ...' + val.length + ' items ]</span>'
-      + '<span class="close-bracket">]</span></span>';
-  }}
-  if (typeof val === 'object') {{
-    const keys = Object.keys(val);
-    if (keys.length === 0) return '{{}}';
-    const items = keys.map((k, i) => {{
-      const comma = i < keys.length - 1 ? ',' : '';
-      return pad1 + '<span class="k">"' + esc(k) + '"</span>: ' + renderJsonToHtml(val[k], indent + 1) + comma;
-    }});
-    const id = 'jn' + (++renderJsonToHtml._id);
-    return '<span id="' + id + '"><span class="tog" onclick="toggleJson(\\''+id+'\\')">-</span>{{\\n'
-      + '<span class="inner">' + items.join('\\n') + '\\n' + pad + '</span>'
-      + '<span class="ellipsis"> ...' + keys.length + ' keys }}</span>'
-      + '<span class="close-bracket">}}</span></span>';
-  }}
-  return esc(String(val));
+  const keyHtml = key !== undefined ? '<span class="k">' + esc(String(key)) + '</span>: ' : '';
+
+  if (val === null) return '<span class="jt-row">' + pad + '<span class="tog-placeholder"></span>' + keyHtml + '<span class="nl">null</span></span>';
+  if (typeof val === 'boolean') return '<span class="jt-row">' + pad + '<span class="tog-placeholder"></span>' + keyHtml + '<span class="b">' + val + '</span></span>';
+  if (typeof val === 'number') return '<span class="jt-row">' + pad + '<span class="tog-placeholder"></span>' + keyHtml + '<span class="n">' + val + '</span></span>';
+  if (typeof val === 'string') return '<span class="jt-row">' + pad + '<span class="tog-placeholder"></span>' + keyHtml + '<span class="s">' + esc(val) + '</span></span>';
+
+  const id = 'jn' + (++renderJsonToHtml._id);
+  renderJsonToHtml._data[id] = val;
+  const isArr = Array.isArray(val);
+  const bracket = isArr ? ['[', ']'] : ['{{', '}}'];
+  const entries = isArr ? val : Object.keys(val);
+  const count = entries.length;
+
+  if (count === 0) return '<span class="jt-row">' + pad + '<span class="tog-placeholder"></span>' + keyHtml + bracket[0] + bracket[1] + '</span>';
+
+  const items = entries.map((entry, i) => {{
+    const childKey = isArr ? i : entry;
+    const childVal = isArr ? entry : val[entry];
+    return renderJsonToHtml(childVal, indent + 1, childKey);
+  }});
+
+  const copyBtn = '<span class="copy-btn" onclick="copyJsonNode(event, \\''+id+'\\')" title="Copy">&#x1f4cb;</span>';
+  const summary = isArr ? count + ' items' : count + ' keys';
+
+  return '<span id="' + id + '" class="jt-row" data-json=\\''+id+'\\'>\\n'
+    + pad + '<span class="tog" onclick="toggleJson(\\''+id+'\\')">&#x25BE;</span>'
+    + keyHtml + bracket[0] + copyBtn + '\\n'
+    + '<span class="inner">' + items.join('\\n') + '\\n'
+    + pad + '</span>'
+    + '<span class="ellipsis"> ' + summary + ' ' + bracket[1] + '</span>'
+    + '<span class="close-bracket">' + pad + bracket[1] + '</span></span>';
 }}
 renderJsonToHtml._id = 0;
+renderJsonToHtml._data = {{}};
 
 function toggleJson(id) {{
   const el = document.getElementById(id);
@@ -815,17 +929,34 @@ function toggleJson(id) {{
   const tog = el.querySelector(':scope > .tog');
   if (el.classList.contains('collapsed')) {{
     el.classList.remove('collapsed');
-    tog.textContent = '-';
+    tog.innerHTML = '&#x25BE;';
   }} else {{
     el.classList.add('collapsed');
-    tog.textContent = '+';
+    tog.innerHTML = '&#x25B8;';
   }}
+}}
+
+function copyJsonNode(event, id) {{
+  event.stopPropagation();
+  const data = renderJsonToHtml._data[id];
+  if (data === undefined) return;
+  navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+  // Brief visual feedback
+  const btn = event.target;
+  const orig = btn.innerHTML;
+  btn.innerHTML = '&#x2713;';
+  btn.style.color = 'var(--green)';
+  btn.style.opacity = '1';
+  setTimeout(() => {{ btn.innerHTML = orig; btn.style.color = ''; btn.style.opacity = ''; }}, 800);
 }}
 
 function renderJson(text) {{
   try {{
     const obj = typeof text === 'string' ? JSON.parse(text) : text;
-    return '<div class="jt"><pre style="margin:0;white-space:pre-wrap;">' + renderJsonToHtml(obj, 0) + '</pre></div>';
+    renderJsonToHtml._id = Math.max(renderJsonToHtml._id, 0);
+    const startId = renderJsonToHtml._id + 1;
+    const html = renderJsonToHtml(obj, 0);
+    return '<div class="jt"><pre style="margin:0;white-space:pre-wrap;">' + html + '</pre></div>';
   }} catch {{
     return '<pre style="margin:0;">' + esc(typeof text === 'string' ? text : JSON.stringify(text)) + '</pre>';
   }}
